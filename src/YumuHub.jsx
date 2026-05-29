@@ -2359,14 +2359,16 @@ class AgentRuntime extends Notifier {
         this._finish(chatId, "idle");
         return msg;
       }
-      // Layer per-chat overrides over agent config (model, tools). Provider/key/prompt stay agent-owned.
+      // Layer per-chat overrides over agent config (model, tools, system prompt). Provider/key stay agent-owned.
       const chatRec = (this.registry && chatId) ? this.registry.getChat(chatId) : null;
       const ov = chatRec?.overrides || {};
       const effectiveModel = ov.model || this.config.model;
       const effectiveAgent = ov.tools ? { ...this.config, tools: ov.tools } : this.config;
       const tools  = opts.noTools ? [] : (this.pluginHost ? this.pluginHost.getForAgent(effectiveAgent).filter(t => !toolGate.has(t.name)) : []);
       const u = (universal.text || "").trim();
-      const baseSP = opts.systemPrompt ?? this.config.systemPrompt;
+      // Per-chat system-prompt override replaces the agent persona for this chat
+      // only, but still wraps with the universal prompt + preamble below.
+      const baseSP = opts.systemPrompt ?? ov.systemPrompt ?? this.config.systemPrompt;
       // Blunt mode: per-agent `bluntMode` wins; falls back to the global
       // setting. When the caller passes an explicit opts.systemPrompt we
       // respect it as-is — they want full control.
@@ -3757,7 +3759,7 @@ The smallest change that fixes it. Name the function and what to change. No mult
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
           {busy && <button onClick={() => chat && runtime?.abort(chat.id)} style={styles.stopBtn} title="Cancel the in-flight request"><Icon name="stop" size={12} color={c.paper}/></button>}
-          <button onClick={() => setCustomizeOpen(o => !o)} disabled={!chat || !agent} style={{ ...styles.headerIconBtn, ...(chat?.overrides ? { color: c.rust } : {}) }} title="Customize this chat (model + tools, this chat only)"><Icon name="settings" size={14}/></button>
+          <button onClick={() => setCustomizeOpen(o => !o)} disabled={!chat || !agent} style={{ ...styles.headerIconBtn, ...(chat?.overrides ? { color: c.rust } : {}) }} title="Customize this chat (model, prompt + tools, this chat only)"><Icon name="settings" size={14}/></button>
           <button onClick={diagnose} disabled={busy || !agent} style={styles.headerIconBtn} title="Self-Diagnose — ask this agent to analyze its own source"><Icon name="search" size={14}/></button>
           <button onClick={handoff}  disabled={busy || !agent} style={styles.headerIconBtn} title="↻ Handoff — summarize and seed the next chat"><Icon name="refresh" size={14}/></button>
           <button onClick={() => chat && runtime?.clearHistory(chat.id)} disabled={!agent || !chat} style={styles.headerIconBtn} title="Clear chat history (no summary)"><Icon name="trash" size={14}/></button>
@@ -3777,6 +3779,7 @@ The smallest change that fixes it. Name the function and what to change. No mult
           // If patch wipes back to defaults, clean up empty override key
           if (next.model === agent.model) delete next.model;
           if (next.tools && next.tools.length === (agent.tools||[]).length && next.tools.every(t => (agent.tools||[]).includes(t))) delete next.tools;
+          if ((next.systemPrompt ?? "") === (agent.systemPrompt ?? "")) delete next.systemPrompt;
           const cleaned = Object.keys(next).length === 0 ? null : next;
           registry.updateChat(chat.id, { overrides: cleaned });
         };
@@ -3801,6 +3804,17 @@ The smallest change that fixes it. Name the function and what to change. No mult
                 })}
               </select>
               {overrides.model && overrides.model !== agent.model && <span style={{ fontSize: 10, color: c.rust, fontFamily: fonts.mono }}>OVERRIDE</span>}
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                <label style={{ fontSize: 11, color: "#5a5244", minWidth: 50 }}>Prompt</label>
+                <span style={{ fontSize: 10, color: "#8a7c63" }}>Replaces this agent's persona — this chat only</span>
+                {overrides.systemPrompt != null && overrides.systemPrompt !== (agent.systemPrompt || "") && <span style={{ marginLeft: "auto", fontSize: 10, color: c.rust, fontFamily: fonts.mono }}>OVERRIDE</span>}
+              </div>
+              <textarea value={overrides.systemPrompt ?? (agent.systemPrompt || "")}
+                onChange={e => setOv({ systemPrompt: e.target.value })}
+                rows={4} placeholder="System prompt for this chat…"
+                style={{ ...styles.field, padding: "8px 12px", fontSize: 12, lineHeight: 1.45, resize: "vertical", margin: 0 }} />
             </div>
             <div style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
               <label style={{ fontSize: 11, color: "#5a5244", minWidth: 50 }}>Tools</label>
@@ -3836,7 +3850,7 @@ The smallest change that fixes it. Name the function and what to change. No mult
           <div style={styles.chatWelcome}>
             <div style={styles.welcomeIcon}><Icon name="bot" size={32} color={c.rust} /></div>
             <h3 style={styles.welcomeTitle}>{agent ? agent.name : "Pick an agent"}</h3>
-            <p style={styles.welcomeDesc}>{agent ? agent.systemPrompt : "Choose an agent in the dropdown above — that agent will reply to messages in this chat."}</p>
+            <p style={styles.welcomeDesc}>{agent ? (chat?.overrides?.systemPrompt || agent.systemPrompt) : "Choose an agent in the dropdown above — that agent will reply to messages in this chat."}</p>
             {agent?.tools?.length > 0 && (
               <div style={{ display: "flex", gap: 5, justifyContent: "center", flexWrap: "wrap", marginTop: 10 }}>
                 {agent.tools.map(t => <span key={t} style={styles.toolChip}>{t}</span>)}
