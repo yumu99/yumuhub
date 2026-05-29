@@ -6,7 +6,9 @@ A line-range index of the source. **Re-read this file (not the whole source) whe
 
 ---
 
-## `src/YumuHub.jsx` (~6286 lines)
+## `src/YumuHub.jsx` (~7,100 lines)
+
+> **Line-number drift notice:** the per-section ranges below predate several feature sprints and now run ~800 lines low in the later sections (e.g. `ChatView` is actually ~L3452, not L2655). Treat every range as approximate and `grep` the symbol name to confirm. Symbols added in the most recent UX sprint are listed accurately under **"Recent UI additions"** below.
 
 ### Imports & build-time source embed — **L1–L9**
 - L1 React imports
@@ -171,6 +173,19 @@ z.ai helpers (L1235–L1259): `resolveZaiKey(ctx, keyHandle)`, `formatZaiError(s
 | `EvalHarnessSection` | L5211–L5340 | Run prompt suites against an agent and score replies |
 | `SettingsView` | L5341–L5621 | idleSec/maxTurns/loopLimit/pollSec, bluntMode, handoffMode, archivePurgeDays, status colors, CCR, model selection, protection toggles, universal prompt, ImproveSourceSection. Reset → 8s Undo banner. Tracks `settingsDirty` via `onDirtyChange`. |
 | `ViewBoundary` | L5622–L5636 | Error boundary with retry button |
+
+### Recent UI additions (chat-UX parity sprint) — *accurate line numbers*
+
+| Symbol | Line | What it is |
+|---|---|---|
+| `fmtTok(n)` | L3276 | Compact token count formatter (e.g. `12.4k`). |
+| `contextWindowFor(provider, model)` | L3285 | Context-window size lookup for the header meter. |
+| `fmtMsgTime(ts)` | L3295 | Per-message timestamp formatter (time today, else `Mon D, time`). |
+| `ChatView` | L3452 | (was listed above at the stale L2655) — now also hosts the **◔ context meter** (header), **`fork(idx)`** (L3745, branch a new chat from a message), **`retry()`** (L3763, replay last user msg from the error banner), and per-message **timestamps**. |
+| `CommandPalette` | L7174 | ⌘K palette: fuzzy-search chats/agents/actions + nav, arrow-key navigation, `onOpenPalette` opens it. |
+| `sidebarKbdHint` (style) | L7484 | The `⌘K` badge shown in the empty sidebar search; click opens the palette. |
+
+**App-level keyboard wiring** (in `YumuHub`, see Root component below): `kbdRef` (useRef, refreshed each render just before `return`) + the global keydown effect (~L6769) own **⌘K** (palette toggle), **⌘N** (new chat), **Esc** (close palette / abort active generation). `onOpenPalette` is threaded App → `Sidebar` → `SidebarChatSection`.
 
 ### Root component (`YumuHub`) — **L5638–L5987**
 - `useReducer` initial state + migration
