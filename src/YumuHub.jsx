@@ -2939,6 +2939,7 @@ function Sidebar({ agents, runtimes, view, onViewChange, onNewChatNav, onNewSide
 function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, registry, onSelectChat, onNewChat }) {
   const [showArchived, setShowArchived] = useState(false);
   const [newProjectName, setNewProjectName] = useState(null);
+  const [query, setQuery] = useState("");
   // Only one row menu (⋮) can be open at a time — prevents the stacking bug
   // where each row's ⋮ stopPropagation kept the others' menus alive.
   const [openMenuKey, setOpenMenuKey] = useState(null);
@@ -3046,6 +3047,7 @@ function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, r
       if (chat.id === activeChatId) onSelectChat(null);
     },
     onMoveToProject: (projectId) => registry.updateChat(chat.id, { projectId }),
+    onExport:        (fmt) => exportChat(chat, registry, agents, fmt),
     projects: visibleProjects,
     dragHandlers: dragHandlersFor(chat),
     dropHint:     chatDrop?.id === chat.id ? chatDrop.pos : null,
@@ -3059,6 +3061,29 @@ function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, r
     setNewProjectName(null);
   };
 
+  // ─── Conversation search ───
+  // Active once 2+ chars are typed. Searches titles + every message body
+  // across ALL chats (archived included — "nothing is ever lost"), returning
+  // a flat, recency-sorted result list with a highlighted snippet.
+  const q = query.trim();
+  const searching = q.length >= 2;
+  let searchResults = null;
+  if (searching) {
+    const ql = q.toLowerCase();
+    searchResults = [];
+    for (const chat of chats) {
+      const titleHit = (chat.title || "").toLowerCase().includes(ql);
+      let snippet = null, count = 0;
+      const msgs = registry.getMessages(chat.id) || [];
+      for (const m of msgs) {
+        const t = msgToText(m);
+        if (t && t.toLowerCase().includes(ql)) { count++; if (!snippet) snippet = searchSnippet(t, q); }
+      }
+      if (titleHit || count > 0) searchResults.push({ chat, snippet, count, titleHit });
+    }
+    searchResults.sort((a, b) => b.chat.lastActivity - a.chat.lastActivity);
+  }
+
   return (
     <div style={styles.sidebarChatSection}>
       <div style={styles.sidebarChatHeader}>
@@ -3068,7 +3093,36 @@ function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, r
           <button onClick={newChat}    style={styles.sidebarMiniBtnPrimary} title="New chat">+ Chat</button>
         </div>
       </div>
+      <div style={styles.sidebarSearchWrap}>
+        <Icon name="search" size={12} color="#8a7c63" />
+        <input value={query} onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => { if (e.key === "Escape") setQuery(""); }}
+          placeholder="Search chats…" style={styles.sidebarSearchInput} />
+        {query && <button onClick={() => setQuery("")} style={styles.sidebarSearchClear} title="Clear search"><Icon name="x" size={11} color="#8a7c63" /></button>}
+      </div>
       <div style={styles.sidebarChatBody}>
+        {searching ? (
+          searchResults.length === 0 ? (
+            <div style={styles.chatListEmpty}>No matches for “{q}”.</div>
+          ) : (
+            <>
+              <div style={styles.searchCount}>{searchResults.length} result{searchResults.length !== 1 ? "s" : ""}</div>
+              {searchResults.map(r => (
+                <button key={r.chat.id} className="searchResultBtn"
+                  style={{ ...styles.searchResult, ...(r.chat.id === activeChatId ? styles.searchResultActive : {}) }}
+                  onClick={() => onSelectChat(r.chat.id)}>
+                  <div style={styles.searchResultTop}>
+                    <span style={styles.searchResultTitle}>{r.chat.pinned ? "📌 " : ""}{highlightMatch(r.chat.title || "Untitled", q)}</span>
+                    <span style={styles.searchResultTime}>{r.chat.archived ? "▪ " : ""}{relTime(r.chat.lastActivity)}</span>
+                  </div>
+                  {r.snippet
+                    ? <div style={styles.searchResultSnippet}>{highlightMatch(r.snippet, q)}{r.count > 1 ? ` · ${r.count} hits` : ""}</div>
+                    : <div style={styles.searchResultSnippet}><em>title match</em></div>}
+                </button>
+              ))}
+            </>
+          )
+        ) : (<>
         {newProjectName !== null && (
           <div style={styles.projectHeader}>
             <span style={{ fontSize: 10, color: "#8a7c63", width: 12 }}>▾</span>
@@ -3100,8 +3154,9 @@ function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, r
         {visibleProjects.length === 0 && ungrouped.length === 0 && (
           <div style={styles.chatListEmpty}>No sessions yet. Click <strong>+ Chat</strong>.</div>
         )}
+        </>)}
       </div>
-      {archivedCount > 0 && (
+      {searching ? null : archivedCount > 0 && (
         <button onClick={() => setShowArchived(s => !s)} style={styles.archivedToggle}>
           {showArchived ? "Hide archived" : `Show archived (${archivedCount})`}
         </button>
@@ -3117,6 +3172,92 @@ function relTime(ts) {
   if (s < 3600) return `${Math.round(s/60)}m`;
   if (s < 86400) return `${Math.round(s/3600)}h`;
   return `${Math.round(s/86400)}d`;
+}
+
+// Flatten a chat message's content to plain text (handles multimodal arrays).
+// Shared by conversation search and chat export.
+function msgToText(msg) {
+  const cnt = msg?.content;
+  if (typeof cnt === "string") return cnt;
+  if (Array.isArray(cnt)) return cnt.filter(p => p?.type === "text" && p.text).map(p => p.text).join("\n");
+  return "";
+}
+
+// Extract a short snippet around the first case-insensitive match of `q`.
+function searchSnippet(text, q) {
+  const i = text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return null;
+  const start = Math.max(0, i - 32);
+  const end = Math.min(text.length, i + q.length + 56);
+  const core = text.slice(start, end).replace(/\s+/g, " ").trim();
+  return (start > 0 ? "…" : "") + core + (end < text.length ? "…" : "");
+}
+
+// Split text into nodes with case-insensitive matches of `q` wrapped in <mark>.
+function highlightMatch(text, q) {
+  if (!q) return text;
+  const out = [];
+  const lc = text.toLowerCase(), ql = q.toLowerCase();
+  let i = 0, idx, k = 0;
+  while ((idx = lc.indexOf(ql, i)) >= 0) {
+    if (idx > i) out.push(text.slice(i, idx));
+    out.push(<mark key={k++} style={styles.searchMark}>{text.slice(idx, idx + q.length)}</mark>);
+    i = idx + q.length;
+  }
+  if (i < text.length) out.push(text.slice(i));
+  return out;
+}
+
+// ─── Chat export ───
+function safeFilename(s) {
+  return (s || "chat").replace(/[^\w\s-]+/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "chat";
+}
+
+function chatToMarkdown(chat, msgs, agents) {
+  const responder = agents.find(a => a.id === chat.responder);
+  const out = [`# ${chat.title || "Untitled chat"}`, ""];
+  out.push(`> Exported ${new Date().toLocaleString()}${responder ? ` · ${responder.name} (${responder.provider}/${responder.model})` : ""}`, "");
+  for (const m of msgs) {
+    if (m.role === "user") {
+      out.push("### 🧑 You", "", msgToText(m) || "_(no text content)_", "");
+    } else if (m.role === "assistant") {
+      const text = msgToText(m);
+      const calls = m.toolCalls || [];
+      if (!text && calls.length === 0) continue;
+      out.push(`### 🤖 ${responder?.name || "Agent"}`, "");
+      if (text) out.push(text, "");
+      for (const tc of calls) out.push(`- 🛠️ \`${tc.name}(${JSON.stringify(tc.input ?? tc.args ?? {})})\``);
+      if (calls.length) out.push("");
+    }
+  }
+  return out.join("\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
+}
+
+function chatToJSON(chat, msgs, agents) {
+  const responder = agents.find(a => a.id === chat.responder);
+  return JSON.stringify({
+    title: chat.title || null,
+    id: chat.id,
+    exportedAt: new Date().toISOString(),
+    agent: responder ? { id: responder.id, name: responder.name, provider: responder.provider, model: responder.model } : null,
+    messageCount: msgs.length,
+    messages: msgs,
+  }, null, 2);
+}
+
+// Serialize a chat and hand it to Rust, which writes it under
+// ~/yumuhub-workspace/exports/ and reveals it in Finder.
+async function exportChat(chat, registry, agents, fmt) {
+  const msgs = registry.getMessages(chat.id) || [];
+  const isJson = fmt === "json";
+  const filename = `${safeFilename(chat.title)}-${new Date().toISOString().slice(0, 10)}.${isJson ? "json" : "md"}`;
+  const contents = isJson ? chatToJSON(chat, msgs, agents) : chatToMarkdown(chat, msgs, agents);
+  try {
+    await invokeTauri("export_chat_file", { filename, contents });
+  } catch (e) {
+    console.error("Export failed:", e);
+    try { window.alert(`Export failed: ${e?.message || e}`); } catch {}
+  }
 }
 
 // Hover-row menu used by both chats and projects. Click outside to dismiss.
@@ -3140,7 +3281,7 @@ function RowMenu({ onClose, items }) {
   );
 }
 
-function ChatRow({ chat, agents, runtime, active, onSelect, onRename, onDelete, onArchive, onPin, onMoveToProject, projects, menuOpen, onMenuToggle, onMenuClose, dragHandlers, dropHint }) {
+function ChatRow({ chat, agents, runtime, active, onSelect, onRename, onDelete, onArchive, onPin, onMoveToProject, onExport, projects, menuOpen, onMenuToggle, onMenuClose, dragHandlers, dropHint }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(chat.title);
   const [confirmingDel, setConfirmingDel] = useState(false);
@@ -3193,6 +3334,8 @@ function ChatRow({ chat, agents, runtime, active, onSelect, onRename, onDelete, 
               onClick: () => onMoveToProject(chat.projectId === p.id ? null : p.id),
             })),
             ...(chat.projectId ? [{ label: "Remove from project", onClick: () => onMoveToProject(null) }] : []),
+            { label: "⤓ Export as Markdown", onClick: () => onExport?.("md") },
+            { label: "⤓ Export as JSON",     onClick: () => onExport?.("json") },
             confirmingDel
               ? { label: "⚠ Click again to confirm delete", danger: true, onClick: () => { onDelete(); setConfirmingDel(false); } }
               : { label: "Delete chat", danger: true, keepOpen: true, onClick: () => setConfirmingDel(true) },
@@ -6769,6 +6912,7 @@ export default function YumuHub() {
         .msgRow:hover .msgActions, .msgRow:focus-within .msgActions { opacity: 1; }
         .msgActionBtn:hover, .mdCodeCopy:hover { border-color: #c0461f !important; color: #c0461f !important; }
         .msgSaveBtn:hover { filter: brightness(1.08); }
+        .searchResultBtn:hover { background: rgba(192,70,31,0.06) !important; }
       `}</style>
       <Sidebar agents={state.agents} runtimes={runtimesRef.current}
         view={state.view}
@@ -7074,6 +7218,18 @@ const styles = {
   sidebarMiniBtnPrimary: { padding: "3px 8px", border: "none", background: c.rust, color: c.paper, borderRadius: 5, cursor: "pointer", fontFamily: fonts.mono, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.04em", lineHeight: 1 },
   sidebarChatBody:    { flex: 1, overflow: "auto", padding: "4px 6px 6px" },
   chatListEmpty:      { padding: "16px 12px", color: "#8a7c63", fontSize: 11, lineHeight: 1.5 },
+  // Conversation search
+  sidebarSearchWrap:  { display: "flex", alignItems: "center", gap: 6, margin: "0 10px 6px", padding: "4px 8px", background: c.paper2, border: borderLight, borderRadius: 8 },
+  sidebarSearchInput: { flex: 1, minWidth: 0, border: "none", background: "transparent", fontFamily: fonts.body, fontSize: 12, color: c.ink, padding: "2px 0" },
+  sidebarSearchClear: { border: "none", background: "transparent", cursor: "pointer", display: "flex", padding: 0, flexShrink: 0 },
+  searchCount:        { fontFamily: fonts.mono, fontSize: 9.5, letterSpacing: "0.12em", color: "#8a7c63", textTransform: "uppercase", padding: "2px 10px 6px" },
+  searchResult:       { display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 8, padding: "7px 10px", cursor: "pointer", marginBottom: 2 },
+  searchResultActive: { background: "rgba(192,70,31,0.08)" },
+  searchResultTop:    { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 },
+  searchResultTitle:  { fontSize: 12.5, fontWeight: 600, color: c.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  searchResultTime:   { fontFamily: fonts.mono, fontSize: 9.5, color: "#a99986", flexShrink: 0 },
+  searchResultSnippet:{ fontSize: 11, color: "#6b6150", lineHeight: 1.4, marginTop: 2, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" },
+  searchMark:         { background: "rgba(216,168,40,0.45)", color: c.ink, borderRadius: 2, padding: "0 1px" },
   ungroupedLabel:   { fontFamily: fonts.mono, fontSize: 9.5, letterSpacing: "0.16em", color: "#8a7c63", padding: "8px 10px 4px" },
   archivedToggle:   { padding: "10px 14px", border: "none", borderTop: `1px dashed ${c.line}`, background: "transparent", cursor: "pointer", fontFamily: fonts.mono, fontSize: 10, color: "#8a7c63", textAlign: "left" },
   // Chat row

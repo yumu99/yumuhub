@@ -372,6 +372,32 @@ fn reveal_universal() -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
+// User-initiated conversation export. Writes to ~/yumuhub-workspace/exports/
+// and reveals the file in Finder. The filename is sanitized to a bare name
+// (control chars and path separators stripped) so a crafted title can't write
+// outside the exports directory.
+#[tauri::command]
+fn export_chat_file(filename: String, contents: String) -> Result<String, String> {
+    let root = workspace_root()?;
+    let dir = root.join("exports");
+    fs::create_dir_all(&dir).map_err(|e| format!("create exports dir: {}", e))?;
+    let cleaned: String = filename
+        .chars()
+        .map(|ch| if ch == '/' || ch == '\\' || ch == ':' || ch.is_control() { '-' } else { ch })
+        .collect();
+    let name = {
+        let t = cleaned.trim_matches(|ch| ch == '.' || ch == ' ' || ch == '-').to_string();
+        if t.is_empty() { "chat-export.txt".to_string() } else { t }
+    };
+    if contents.len() > 16 * 1024 * 1024 {
+        return Err(format!("Refused to write {} bytes — export exceeds the 16 MB cap.", contents.len()));
+    }
+    let path = dir.join(&name);
+    fs::write(&path, &contents).map_err(|e| format!("write {}: {}", path.display(), e))?;
+    std::process::Command::new("open").arg("-R").arg(&path).spawn().ok();
+    Ok(path.display().to_string())
+}
+
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     // H5: macOS `open` resolves any URL scheme — file://, custom-protocol
@@ -825,6 +851,7 @@ fn main() {
             read_universal,
             write_universal,
             reveal_universal,
+            export_chat_file,
             open_url,
             brave_search,
             zai_anthropic_proxy,
