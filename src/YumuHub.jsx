@@ -2327,7 +2327,7 @@ class AgentRuntime extends Notifier {
       // warn mode: log only, continue
     }
     this.statuses[chatId] = "busy";
-    hist.push({ role: "user", content: userMessage });
+    hist.push({ role: "user", content: userMessage, ts: Date.now() });
     const abortCtrl = new AbortController();
     this._aborts[chatId] = abortCtrl;
     this._abortReasons[chatId] = null;
@@ -2486,7 +2486,7 @@ class AgentRuntime extends Notifier {
       if (!toolCalls?.length) {
         // Stash the real API usage on the terminal message so the chat view can
         // show a live context-window meter (inTokens here = full prompt size).
-        hist[placeholderIdx] = { role: "assistant", content: finalText || "", usage: usage || null };
+        hist[placeholderIdx] = { role: "assistant", content: finalText || "", usage: usage || null, ts: Date.now() };
         return finalText || "";
       }
       hist[placeholderIdx] = { role: "assistant", content: finalText || null, toolCalls };
@@ -3288,6 +3288,16 @@ function contextWindowFor(provider, model) {
   return null;
 }
 
+// Compact message timestamp: "2:34 PM" for today, "May 28, 2:34 PM" otherwise.
+function fmtMsgTime(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString()
+    ? time
+    : `${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
+
 // Hover-row menu used by both chats and projects. Click outside to dismiss.
 // Each item may set `keepOpen: true` to stay open after firing (for two-step confirmations).
 function RowMenu({ onClose, items }) {
@@ -3969,6 +3979,7 @@ The smallest change that fixes it. Name the function and what to change. No mult
                   </div>
                   {!busy && (
                     <div className="msgActions" style={{ ...styles.msgActions, justifyContent: "flex-end" }}>
+                      {msg.ts && <span style={styles.msgTime}>{fmtMsgTime(msg.ts)}</span>}
                       {editable && <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => startEdit(i, msg.content)} title="Edit and resend">Edit</button>}
                       <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => fork(i)} title="Branch a new chat from here — keeps this one intact">⑂ Fork</button>
                     </div>
@@ -4008,6 +4019,7 @@ The smallest change that fixes it. Name the function and what to change. No mult
                       {!busy && i === history.length - 1 && (
                         <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => regenerate(i)} title="Regenerate this response">↻ Regenerate</button>
                       )}
+                      {msg.ts && <span style={styles.msgTime}>{fmtMsgTime(msg.ts)}</span>}
                     </div>
                   )}
                 </div>
@@ -7291,6 +7303,7 @@ const styles = {
   mdCodePre:      { background: c.ink, color: "#e8e0cf", padding: "10px 12px", fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, overflow: "auto" },
   msgActions:     { display: "flex", gap: 6, marginTop: 8 },
   msgActionBtn:   { fontFamily: fonts.mono, fontSize: 9.5, color: "#8a7c63", background: "transparent", border: `1px solid ${c.line}`, borderRadius: 6, padding: "3px 9px", cursor: "pointer", letterSpacing: "0.04em", transition: "0.12s" },
+  msgTime:        { fontFamily: fonts.mono, fontSize: 9.5, color: "#a89c83", alignSelf: "center", letterSpacing: "0.04em" },
   // Edit & resend (user messages)
   msgUserCol:     { display: "flex", flexDirection: "column", alignItems: "flex-end", maxWidth: "70%" },
   msgEditCol:     { display: "flex", flexDirection: "column", width: "70%" },
