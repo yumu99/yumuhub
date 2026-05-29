@@ -3726,6 +3726,24 @@ The smallest change that fixes it. Name the function and what to change. No mult
     try { await runtime.chat(text, { chatId: chat.id }); } catch (e) { setError(e.message); }
   };
 
+  // Fork: branch a new chat from message `idx`, copying history up to and
+  // including it. The original chat is left untouched — explore an alternate
+  // path without losing the current one (ChatGPT/Claude branch semantics).
+  const fork = (idx) => {
+    if (!chat || !runtime) return;
+    let end = idx + 1;
+    // Never cut between an assistant's tool-call and its tool result, or the
+    // forked history would carry a dangling tool_use the provider rejects.
+    if (history[idx]?.role === "assistant" && history[idx]?.toolCalls?.length && history[end]?.role === "tool") end++;
+    const slice = history.slice(0, end).map(m => ({ ...m, streaming: false }));
+    const base  = (chat.title || "Chat").replace(/ \(fork(?: \d+)?\)$/i, "");
+    const newChat = registry.createChat({ title: `${base} (fork)`, members: chat.members, responder: chat.responder });
+    if (chat.overrides) registry.updateChat(newChat.id, { overrides: { ...chat.overrides } });
+    runtime.setHistory(newChat.id, slice);
+    setError(null);
+    onSelectChat?.(newChat.id);
+  };
+
   return (
     <div style={styles.chatContainer}
       onDrop={onFileDrop}
@@ -3939,9 +3957,10 @@ The smallest change that fixes it. Name the function and what to change. No mult
                       return part.text ? <div key={pi} style={styles.msgText}>{part.text}</div> : null;
                     })}
                   </div>
-                  {editable && !busy && (
+                  {!busy && (
                     <div className="msgActions" style={{ ...styles.msgActions, justifyContent: "flex-end" }}>
-                      <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => startEdit(i, msg.content)} title="Edit and resend">Edit</button>
+                      {editable && <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => startEdit(i, msg.content)} title="Edit and resend">Edit</button>}
+                      <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => fork(i)} title="Branch a new chat from here — keeps this one intact">⑂ Fork</button>
                     </div>
                   )}
                 </div>
@@ -3973,6 +3992,9 @@ The smallest change that fixes it. Name the function and what to change. No mult
                   {!msg.streaming && msg.content && (
                     <div className="msgActions" style={styles.msgActions}>
                       <CopyBtn text={msg.content} />
+                      {!busy && (
+                        <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => fork(i)} title="Branch a new chat from here — keeps this one intact">⑂ Fork</button>
+                      )}
                       {!busy && i === history.length - 1 && (
                         <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => regenerate(i)} title="Regenerate this response">↻ Regenerate</button>
                       )}
