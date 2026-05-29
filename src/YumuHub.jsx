@@ -6656,6 +6656,7 @@ export default function YumuHub() {
   const _saved = persist.loadActive();
   const _initialChatId = (_saved.chatId && registry.getChat(_saved.chatId)?.id) || registry.chats[0]?.id || null;
   const [sidebarCollapsed, setSidebarCollapsed]   = useState(!!_saved.sidebarCollapsed);
+  const [paletteOpen, setPaletteOpen]             = useState(false);
 
   const [state, dispatch] = useReducer(appReducer, {
     agents: DEFAULT_AGENTS,
@@ -6712,6 +6713,18 @@ export default function YumuHub() {
       persist.saveAgents(newAgents.filter(a => !a.ephemeral));
     });
   }, []); // eslint-disable-line
+
+  // ⌘K / Ctrl+K toggles the command palette from anywhere in the app.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setPaletteOpen(o => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Subscribe to registry changes so the UI re-renders when chats/projects mutate
   useEffect(() => registry.onChange(() => dispatch({ type: "TICK" })), []);
@@ -7007,6 +7020,18 @@ export default function YumuHub() {
         />
       )}
       <ApprovalModal />
+      {paletteOpen && (
+        <CommandPalette
+          onClose={() => setPaletteOpen(false)}
+          chats={registry.chats}
+          agents={state.agents}
+          activeChatId={state.activeChatId}
+          onNewChat={createNewChat}
+          onSelectChat={(id) => { selectChat(id); dispatch({ type: "SET_VIEW", view: "chat" }); }}
+          onSelectAgent={selectAgent}
+          onViewChange={(v) => navGuard(() => { maybeCloseEditor(); dispatch({ type: "SET_VIEW", view: v }); })}
+        />
+      )}
     </div>
   );
 }
@@ -7062,6 +7087,92 @@ function NavConfirmModal({ onDiscard, onCancel, onNeverShowAgain }) {
   );
 }
 
+// ─── Command palette (⌘K) ───
+// A keyboard-first fuzzy switcher over chats, agents, and navigation — the
+// entry point you'd expect from ChatGPT / Claude Code / Linear / VS Code.
+// Open with ⌘K (Ctrl+K), filter as you type, ↑↓ to move, ↵ to run, esc to close.
+function CommandPalette({ onClose, chats, agents, activeChatId, onNewChat, onSelectChat, onSelectAgent, onViewChange }) {
+  const [q, setQ]     = useState("");
+  const [sel, setSel] = useState(0);
+  const inputRef = useRef(null);
+  const listRef  = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  // Flat command list in default (no-query) priority order: actions, then
+  // navigation, then agents, then chats (most-recently-active first).
+  const cmds = [];
+  cmds.push({ id: "act:new", kind: "Action", icon: "plus", label: "New chat", sub: "Start a fresh conversation", run: onNewChat });
+  NAV_ITEMS.filter(n => n.id !== "chat").forEach(n =>
+    cmds.push({ id: `nav:${n.id}`, kind: "Go to", icon: n.icon, label: n.label, sub: `Open the ${n.label} view`, run: () => onViewChange(n.id) }));
+  agents.filter(a => !a.ephemeral).forEach(a =>
+    cmds.push({ id: `agt:${a.id}`, kind: "Agent", icon: "bot", label: a.name, sub: `${a.provider} · ${a.model}`, run: () => onSelectAgent(a.id) }));
+  chats.filter(ch => !ch.archived).sort((a, b) => (b.lastActivity || 0) - (a.lastActivity || 0)).forEach(ch => {
+    const resp = agents.find(a => a.id === ch.responder);
+    cmds.push({ id: `chat:${ch.id}`, kind: "Chat", icon: "chat", label: ch.title || "Untitled", sub: resp ? resp.name : "—", active: ch.id === activeChatId, run: () => onSelectChat(ch.id) });
+  });
+
+  const query = q.trim().toLowerCase();
+  let results;
+  if (!query) {
+    const take = (k, n) => cmds.filter(x => x.kind === k).slice(0, n);
+    results = [...cmds.filter(x => x.kind === "Action" || x.kind === "Go to"), ...take("Agent", 6), ...take("Chat", 8)];
+  } else {
+    // Substring match across label + subtitle; earlier matches rank higher,
+    // shorter labels break ties (so an exact-ish hit beats a long incidental one).
+    results = cmds
+      .map(x => ({ x, i: `${x.label} ${x.sub || ""}`.toLowerCase().indexOf(query) }))
+      .filter(r => r.i >= 0)
+      .sort((a, b) => a.i - b.i || a.x.label.length - b.x.label.length)
+      .map(r => r.x);
+  }
+
+  const clampSel = Math.min(sel, Math.max(0, results.length - 1));
+
+  // Keep the highlighted row scrolled into view as you arrow through.
+  useEffect(() => { listRef.current?.children[clampSel]?.scrollIntoView({ block: "nearest" }); }, [clampSel]);
+
+  const exec = (cmd) => { if (!cmd) return; onClose(); cmd.run(); };
+
+  const onKey = (e) => {
+    if (e.key === "ArrowDown")    { e.preventDefault(); setSel(s => Math.min(s + 1, results.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setSel(s => Math.max(s - 1, 0)); }
+    else if (e.key === "Enter")   { e.preventDefault(); exec(results[clampSel]); }
+    else if (e.key === "Escape")  { e.preventDefault(); onClose(); }
+  };
+
+  return (
+    <div style={styles.paletteOverlay} onMouseDown={onClose}>
+      <div style={styles.paletteCard} onMouseDown={e => e.stopPropagation()}>
+        <input ref={inputRef} value={q} onChange={e => { setQ(e.target.value); setSel(0); }} onKeyDown={onKey}
+          placeholder="Search chats, agents, actions…" style={styles.paletteInput} />
+        <div ref={listRef} style={styles.paletteList}>
+          {results.length === 0 && <div style={styles.paletteEmpty}>No matches</div>}
+          {results.map((cmd, i) => (
+            <div key={cmd.id} onMouseEnter={() => setSel(i)} onMouseDown={e => { e.preventDefault(); exec(cmd); }}
+              style={{ ...styles.paletteRow, ...(i === clampSel ? styles.paletteRowActive : {}) }}>
+              <Icon name={cmd.icon} size={15} color={i === clampSel ? c.rust : "#8a7c63"} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={styles.paletteRowLabel}>
+                  {cmd.label}
+                  {cmd.active && <span style={{ color: c.rust, fontSize: 9, marginLeft: 7, fontFamily: fonts.mono }}>● current</span>}
+                </div>
+                {cmd.sub && <div style={styles.paletteRowSub}>{cmd.sub}</div>}
+              </div>
+              <span style={styles.paletteKind}>{cmd.kind}</span>
+            </div>
+          ))}
+        </div>
+        <div style={styles.paletteFooter}>
+          <span><kbd style={styles.kbd}>↑</kbd><kbd style={styles.kbd}>↓</kbd> navigate</span>
+          <span><kbd style={styles.kbd}>↵</kbd> open</span>
+          <span><kbd style={styles.kbd}>esc</kbd> close</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── STYLES ───
 const fonts = { display: "'Fraunces', serif", mono: "'Space Mono', monospace", body: "'Sora', sans-serif" };
 const c = { ink: "#13110e", paper: "#f4efe6", paper2: "#ece4d6", rust: "#c0461f", rustDeep: "#962f10", moss: "#4a5a3a", gold: "#caa04a", sky: "#3d6b8a", line: "#d4c6ad" };
@@ -7095,6 +7206,18 @@ const styles = {
   chatHeaderLeft: { display: "flex", alignItems: "center", gap: 10 },
   chatAgentName:  { fontFamily: fonts.display, fontSize: 20, fontWeight: 700 },
   chatModel:      { fontFamily: fonts.mono, fontSize: 10, color: "#8a7c63", background: c.paper2, padding: "3px 8px", borderRadius: 12, border: borderLight },
+  paletteOverlay: { position: "fixed", inset: 0, background: "rgba(19,17,14,0.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "12vh", zIndex: 1200 },
+  paletteCard:    { width: 580, maxWidth: "90vw", maxHeight: "70vh", display: "flex", flexDirection: "column", background: c.paper, border: `1px solid ${c.line}`, borderRadius: 14, boxShadow: "0 16px 48px rgba(19,17,14,0.32)", overflow: "hidden" },
+  paletteInput:   { padding: "16px 18px", border: "none", borderBottom: borderLight, background: "none", fontFamily: fonts.body, fontSize: 15, color: c.ink },
+  paletteList:    { overflowY: "auto", padding: 6, flex: 1 },
+  paletteRow:     { display: "flex", alignItems: "center", gap: 11, padding: "9px 12px", borderRadius: 8, cursor: "pointer" },
+  paletteRowActive:{ background: "rgba(192,70,31,0.08)" },
+  paletteRowLabel:{ fontSize: 13.5, color: c.ink, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+  paletteRowSub:  { fontSize: 10.5, color: "#8a7c63", fontFamily: fonts.mono, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", marginTop: 1 },
+  paletteKind:    { fontSize: 9, fontFamily: fonts.mono, color: "#8a7c63", background: c.paper2, padding: "2px 7px", borderRadius: 10, flexShrink: 0, textTransform: "uppercase", letterSpacing: 0.4 },
+  paletteEmpty:   { padding: "24px 12px", textAlign: "center", color: "#8a7c63", fontSize: 12.5, fontFamily: fonts.mono },
+  paletteFooter:  { display: "flex", gap: 16, padding: "9px 16px", borderTop: borderLight, fontSize: 10.5, color: "#8a7c63", fontFamily: fonts.mono, background: c.paper2 },
+  kbd:            { display: "inline-block", minWidth: 16, padding: "1px 5px", marginRight: 3, border: borderLight, borderRadius: 4, background: c.paper, fontFamily: fonts.mono, fontSize: 10, textAlign: "center" },
   clearBtn:       { ...baseSmallBtn, border: borderLight, color: "#8a7c63" },
   stopBtn:        { ...baseSmallBtn, border: `1px solid ${c.rustDeep}`, background: c.rustDeep, color: c.paper, fontWeight: 700, letterSpacing: "0.04em" },
   streamCursor:   { display: "inline-block", color: c.rust, animation: "blink 1s infinite", marginLeft: 1 },
