@@ -2895,7 +2895,7 @@ const NAV_ITEMS = [
 ];
 
 function Sidebar({ agents, runtimes, view, onViewChange, onNewChatNav, onNewSidebarChat, collapsed, onToggle,
-                   chats, projects, activeChatId, registry, selectChat }) {
+                   chats, projects, activeChatId, registry, selectChat, onOpenPalette }) {
   const navClick = (id) => (id === "chat" ? onNewChatNav() : onViewChange(id));
   if (collapsed) {
     return (
@@ -2937,6 +2937,7 @@ function Sidebar({ agents, runtimes, view, onViewChange, onNewChatNav, onNewSide
         chats={chats} projects={projects} agents={agents} runtimes={runtimes}
         activeChatId={activeChatId} registry={registry}
         onSelectChat={(id) => { selectChat(id); onViewChange("chat"); }}
+        onOpenPalette={onOpenPalette}
         onNewChat={onNewSidebarChat} />
     </div>
   );
@@ -2944,7 +2945,7 @@ function Sidebar({ agents, runtimes, view, onViewChange, onNewChatNav, onNewSide
 
 // Owns the SESSIONS section inside the sidebar — same content the standalone
 // ChatListPanel used to render (projects + ungrouped + archived toggle + +Chat/+Project).
-function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, registry, onSelectChat, onNewChat }) {
+function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, registry, onSelectChat, onNewChat, onOpenPalette }) {
   const [showArchived, setShowArchived] = useState(false);
   const [newProjectName, setNewProjectName] = useState(null);
   const [query, setQuery] = useState("");
@@ -3098,7 +3099,7 @@ function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, r
         <div style={styles.navLabel}>SESSIONS</div>
         <div style={{ display: "flex", gap: 4 }}>
           <button onClick={newProject} style={styles.sidebarMiniBtn} title="New project">+📁</button>
-          <button onClick={newChat}    style={styles.sidebarMiniBtnPrimary} title="New chat">+ Chat</button>
+          <button onClick={newChat}    style={styles.sidebarMiniBtnPrimary} title="New chat  (⌘N)">+ Chat</button>
         </div>
       </div>
       <div style={styles.sidebarSearchWrap}>
@@ -3106,7 +3107,9 @@ function SidebarChatSection({ chats, projects, agents, runtimes, activeChatId, r
         <input value={query} onChange={e => setQuery(e.target.value)}
           onKeyDown={e => { if (e.key === "Escape") setQuery(""); }}
           placeholder="Search chats…" style={styles.sidebarSearchInput} />
-        {query && <button onClick={() => setQuery("")} style={styles.sidebarSearchClear} title="Clear search"><Icon name="x" size={11} color="#8a7c63" /></button>}
+        {query
+          ? <button onClick={() => setQuery("")} style={styles.sidebarSearchClear} title="Clear search"><Icon name="x" size={11} color="#8a7c63" /></button>
+          : onOpenPalette && <button onMouseDown={e => { e.preventDefault(); onOpenPalette(); }} style={styles.sidebarKbdHint} title="Open command palette — search chats, agents & actions">⌘K</button>}
       </div>
       <div style={styles.sidebarChatBody}>
         {searching ? (
@@ -3836,7 +3839,7 @@ The smallest change that fixes it. Name the function and what to change. No mult
               ◔ {ctxWindow ? `${fmtTok(ctxTokens)}/${fmtTok(ctxWindow)}` : `~${fmtTok(ctxTokens)} tok`}
             </span>
           )}
-          {busy && <button onClick={() => chat && runtime?.abort(chat.id)} style={styles.stopBtn} title="Cancel the in-flight request"><Icon name="stop" size={12} color={c.paper}/></button>}
+          {busy && <button onClick={() => chat && runtime?.abort(chat.id)} style={styles.stopBtn} title="Stop generating  (Esc)"><Icon name="stop" size={12} color={c.paper}/></button>}
           <button onClick={() => setCustomizeOpen(o => !o)} disabled={!chat || !agent} style={{ ...styles.headerIconBtn, ...(chat?.overrides ? { color: c.rust } : {}) }} title="Customize this chat (model, prompt + tools, this chat only)"><Icon name="settings" size={14}/></button>
           <button onClick={diagnose} disabled={busy || !agent} style={styles.headerIconBtn} title="Self-Diagnose — ask this agent to analyze its own source"><Icon name="search" size={14}/></button>
           <button onClick={handoff}  disabled={busy || !agent} style={styles.headerIconBtn} title="↻ Handoff — summarize and seed the next chat"><Icon name="refresh" size={14}/></button>
@@ -7066,6 +7069,7 @@ export default function YumuHub() {
         onToggle={() => setSidebarCollapsed(v => !v)}
         chats={registry.chats} projects={registry.projects}
         activeChatId={state.activeChatId} registry={registry}
+        onOpenPalette={() => setPaletteOpen(true)}
         selectChat={selectChat} />
       <div style={styles.main}>
         <ViewBoundary key={`${state.view}:${state.activeChatId || "none"}`}>
@@ -7477,6 +7481,7 @@ const styles = {
   sidebarSearchWrap:  { display: "flex", alignItems: "center", gap: 6, margin: "0 10px 6px", padding: "4px 8px", background: c.paper2, border: borderLight, borderRadius: 8 },
   sidebarSearchInput: { flex: 1, minWidth: 0, border: "none", background: "transparent", fontFamily: fonts.body, fontSize: 12, color: c.ink, padding: "2px 0" },
   sidebarSearchClear: { border: "none", background: "transparent", cursor: "pointer", display: "flex", padding: 0, flexShrink: 0 },
+  sidebarKbdHint:     { flexShrink: 0, border: borderLight, background: c.paper, borderRadius: 4, padding: "1px 5px", fontFamily: fonts.mono, fontSize: 9.5, color: "#8a7c63", cursor: "pointer", letterSpacing: "0.02em" },
   searchCount:        { fontFamily: fonts.mono, fontSize: 9.5, letterSpacing: "0.12em", color: "#8a7c63", textTransform: "uppercase", padding: "2px 10px 6px" },
   searchResult:       { display: "block", width: "100%", textAlign: "left", background: "transparent", border: "none", borderRadius: 8, padding: "7px 10px", cursor: "pointer", marginBottom: 2 },
   searchResultActive: { background: "rgba(192,70,31,0.08)" },
