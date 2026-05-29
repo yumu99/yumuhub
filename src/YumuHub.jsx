@@ -6708,6 +6708,10 @@ export default function YumuHub() {
   const _initialChatId = (_saved.chatId && registry.getChat(_saved.chatId)?.id) || registry.chats[0]?.id || null;
   const [sidebarCollapsed, setSidebarCollapsed]   = useState(!!_saved.sidebarCollapsed);
   const [paletteOpen, setPaletteOpen]             = useState(false);
+  // Holds the latest closures for global keyboard shortcuts, refreshed every
+  // render just before the return. Lets the once-registered keydown listener
+  // call current handlers without going stale (it has an empty dep array).
+  const kbdRef = useRef({});
 
   const [state, dispatch] = useReducer(appReducer, {
     agents: DEFAULT_AGENTS,
@@ -6765,12 +6769,22 @@ export default function YumuHub() {
     });
   }, []); // eslint-disable-line
 
-  // ⌘K / Ctrl+K toggles the command palette from anywhere in the app.
+  // Global keyboard shortcuts. Registered once; reads live handlers off kbdRef
+  // so it never goes stale. ⌘K palette · ⌘N new chat · Esc close/stop.
   useEffect(() => {
     const onKey = (e) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
         setPaletteOpen(o => !o);
+      } else if (meta && (e.key === "n" || e.key === "N")) {
+        e.preventDefault();
+        kbdRef.current.newChat?.();
+      } else if (e.key === "Escape") {
+        // Palette owns Esc while open (it closes itself). Otherwise Esc
+        // cancels the in-flight generation in the active chat, if any.
+        if (kbdRef.current.paletteOpen) return;
+        kbdRef.current.stopActive?.();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -7016,6 +7030,17 @@ export default function YumuHub() {
       const c = registry.createChat({ title: "New chat", members: [agentId], responder: agentId });
       selectChat(c.id);
     }
+  };
+
+  // Refresh the live handlers the global keydown listener reads from.
+  kbdRef.current = {
+    newChat: createNewChat,
+    paletteOpen,
+    stopActive: () => {
+      if (!activeChat || !responderRuntime) return;
+      const s = responderRuntime.statusOf?.(activeChat.id) || "idle";
+      if (s === "busy" || s.startsWith?.("tool:")) responderRuntime.abort(activeChat.id);
+    },
   };
 
   return (
