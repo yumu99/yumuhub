@@ -1,10 +1,34 @@
 {
   "name": "yumuhub",
   "version": "1.0.0",
-  "description": "Multi-agent AI gateway",
+  "private": true,
+  "description": "A chat-native desktop hub for orchestrating independent, multi-provider AI agents that can spawn sub-agents, use tools, and message each other over a shared bus.",
+  "author": "yumu99",
+  "license": "UNLICENSED",
+  "keywords": [
+    "ai",
+    "agents",
+    "multi-agent",
+    "llm",
+    "tauri",
+    "anthropic",
+    "openai",
+    "chat",
+    "desktop",
+    "react"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yumu99/yumuhub.git"
+  },
+  "homepage": "https://github.com/yumu99/yumuhub#readme",
+  "bugs": {
+    "url": "https://github.com/yumu99/yumuhub/issues"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "preview": "vite preview",
     "tauri": "tauri"
   },
   "dependencies": {
