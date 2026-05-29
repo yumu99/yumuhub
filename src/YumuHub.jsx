@@ -576,6 +576,7 @@ const COST_PER_1K = {
   "claude-haiku-4-5-20251001": [0.0008, 0.004 ],
   "gpt-4o":                    [0.0025, 0.01  ],
   "gpt-4o-mini":               [0.00015,0.0006],
+  "echo-v1":                   [0,      0     ],  // Mock provider is free.
   // z.ai pricing varies widely per model — use a low default; users can adjust later.
 };
 function estimateCost(model, inTokens, outTokens) {
@@ -2185,7 +2186,10 @@ const providers = {
         text += chunk;
         onDelta?.(chunk);
       }
-      return { text, toolCalls: null };
+      // Synthetic usage (~4 chars/token) so the context meter + cost stats
+      // exercise the full UI even with no API key. Mock is priced at $0.
+      const inChars = (systemPrompt?.length || 0) + history.reduce((a, m) => a + (typeof m.content === "string" ? m.content.length : 0), 0);
+      return { text, toolCalls: null, usage: { inTokens: Math.ceil(inChars / 4), outTokens: Math.ceil(text.length / 4) } };
     },
   },
 };
@@ -2480,7 +2484,9 @@ class AgentRuntime extends Notifier {
       const finalText = text ?? streamed;
 
       if (!toolCalls?.length) {
-        hist[placeholderIdx] = { role: "assistant", content: finalText || "" };
+        // Stash the real API usage on the terminal message so the chat view can
+        // show a live context-window meter (inTokens here = full prompt size).
+        hist[placeholderIdx] = { role: "assistant", content: finalText || "", usage: usage || null };
         return finalText || "";
       }
       hist[placeholderIdx] = { role: "assistant", content: finalText || null, toolCalls };
@@ -3262,6 +3268,26 @@ async function exportChat(chat, registry, agents, fmt) {
   }
 }
 
+// ─── Context-window meter ───
+// Compact token formatting: 950 → "950", 12300 → "12.3k", 200000 → "200k".
+function fmtTok(n) {
+  if (n == null) return "?";
+  if (n < 1000) return `${n}`;
+  const k = n / 1000;
+  return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
+}
+
+// Approximate context-window sizes (tokens) by provider/model. Returns null
+// when unknown (e.g. mock) so the meter falls back to a bare token count.
+function contextWindowFor(provider, model) {
+  const m = (model || "").toLowerCase();
+  if (provider === "anthropic") return 200000;
+  if (provider === "openai")    return m.includes("gpt-3.5") ? 16000 : 128000;
+  if (provider === "zai")       return 128000;
+  if (provider === "ccr")       return 200000;
+  return null;
+}
+
 // Hover-row menu used by both chats and projects. Click outside to dismiss.
 // Each item may set `keepOpen: true` to stay open after firing (for two-step confirmations).
 function RowMenu({ onClose, items }) {
@@ -3660,6 +3686,14 @@ The smallest change that fixes it. Name the function and what to change. No mult
 
   const history = (slotHistory || []).filter(Boolean);
 
+  // Live context meter: the most recent real API usage reflects the current
+  // window load (inTokens = full prompt, + the reply we appended after).
+  const effModel  = chat?.overrides?.model || agent?.model;
+  const lastUsage = (() => { for (let k = history.length - 1; k >= 0; k--) if (history[k]?.usage) return history[k].usage; return null; })();
+  const ctxTokens = lastUsage ? (lastUsage.inTokens || 0) + (lastUsage.outTokens || 0) : null;
+  const ctxWindow = agent ? contextWindowFor(agent.provider, effModel) : null;
+  const ctxPct    = (ctxTokens != null && ctxWindow) ? Math.min(100, Math.round(ctxTokens / ctxWindow * 100)) : null;
+
   // Regenerate: rewind to the user turn that produced the assistant message at
   // `idx` and replay it — runtime.chat() re-pushes the user message and streams
   // a fresh reply. Truncating the slot first drops the old reply (and any tool
@@ -3757,7 +3791,13 @@ The smallest change that fixes it. Name the function and what to change. No mult
           })()}
           {toolName && <span style={{ ...styles.chatModel, color: c.rust, borderColor: "rgba(192,70,31,0.3)" }}>⚙ {toolName}…</span>}
         </div>
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
+          {ctxTokens != null && (
+            <span style={{ ...styles.chatModel, ...(ctxPct != null && ctxPct >= 85 ? { color: c.rust, borderColor: "rgba(192,70,31,0.35)" } : ctxPct != null && ctxPct >= 65 ? { color: c.gold } : {}) }}
+              title={`~${ctxTokens.toLocaleString()} tokens in context${ctxWindow ? ` · ~${ctxPct}% of this model's ${fmtTok(ctxWindow)} window` : ""}\nMeasured from the last API response. Clear or hand off the chat to reset.`}>
+              ◔ {ctxWindow ? `${fmtTok(ctxTokens)}/${fmtTok(ctxWindow)}` : `~${fmtTok(ctxTokens)} tok`}
+            </span>
+          )}
           {busy && <button onClick={() => chat && runtime?.abort(chat.id)} style={styles.stopBtn} title="Cancel the in-flight request"><Icon name="stop" size={12} color={c.paper}/></button>}
           <button onClick={() => setCustomizeOpen(o => !o)} disabled={!chat || !agent} style={{ ...styles.headerIconBtn, ...(chat?.overrides ? { color: c.rust } : {}) }} title="Customize this chat (model, prompt + tools, this chat only)"><Icon name="settings" size={14}/></button>
           <button onClick={diagnose} disabled={busy || !agent} style={styles.headerIconBtn} title="Self-Diagnose — ask this agent to analyze its own source"><Icon name="search" size={14}/></button>
