@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>yumuHub — Technical Specification</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,900&family=Space+Mono:wght@400;700&family=Sora:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#13110e;
+    --paper:#f4efe6;
+    --paper-2:#ece4d6;
+    --rust:#c0461f;
+    --rust-deep:#962f10;
+    --moss:#4a5a3a;
+    --gold:#caa04a;
+    --sky:#3d6b8a;
+    --line:#d4c6ad;
+    --shadow:rgba(40,30,15,0.12);
+    --mono:'Space Mono',monospace;
+    --display:'Fraunces',serif;
+    --body:'Sora',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:var(--body);
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    background-image:
+      radial-gradient(circle at 12% 18%, rgba(192,70,31,0.05), transparent 38%),
+      radial-gradient(circle at 88% 8%, rgba(61,107,138,0.05), transparent 40%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
+  }
+
+  /* ---------- Layout ---------- */
+  .wrap{display:grid;grid-template-columns:268px 1fr;min-height:100vh}
+  nav.toc{
+    position:sticky;top:0;height:100vh;overflow-y:auto;
+    padding:38px 26px;border-right:1px solid var(--line);
+    background:linear-gradient(175deg,var(--paper-2),var(--paper));
+  }
+  main{padding:64px clamp(24px,5vw,90px) 120px;max-width:980px}
+
+  /* ---------- TOC ---------- */
+  .brand{display:flex;align-items:center;gap:11px;margin-bottom:6px}
+  .glyph{
+    width:34px;height:34px;flex:none;border-radius:9px;
+    background:var(--ink);color:var(--gold);
+    display:grid;place-items:center;font-family:var(--mono);font-weight:700;font-size:15px;
+    box-shadow:3px 3px 0 var(--rust);
+  }
+  .brand h1{font-family:var(--display);font-size:23px;font-weight:900;letter-spacing:-.02em;line-height:1}
+  .brand .sub{font-family:var(--mono);font-size:9.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--rust-deep);margin-top:3px}
+  .toc .meta{font-family:var(--mono);font-size:10px;color:#8a7c63;margin:18px 0 26px;letter-spacing:.04em;border-top:1px dashed var(--line);padding-top:14px}
+  .toc ol{list-style:none;counter-reset:s}
+  .toc li{counter-increment:s;margin:1px 0}
+  .toc a{
+    display:flex;gap:10px;align-items:baseline;text-decoration:none;color:var(--ink);
+    font-size:13.5px;padding:7px 10px;border-radius:7px;transition:.18s;position:relative
+  }
+  .toc a::before{content:counter(s,decimal-leading-zero);font-family:var(--mono);font-size:10px;color:var(--rust);opacity:.65;flex:none}
+  .toc a:hover{background:var(--paper-2)}
+  .toc a.active{background:var(--ink);color:var(--paper)}
+  .toc a.active::before{color:var(--gold);opacity:1}
+
+  /* ---------- Hero ---------- */
+  .hero{margin-bottom:64px;position:relative}
+  .kicker{font-family:var(--mono);font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--rust-deep);margin-bottom:18px;display:flex;align-items:center;gap:12px}
+  .kicker::after{content:"";height:1px;flex:1;background:var(--line)}
+  .hero h2{font-family:var(--display);font-weight:900;font-size:clamp(40px,7vw,76px);line-height:.96;letter-spacing:-.03em;margin-bottom:22px}
+  .hero h2 em{font-style:italic;color:var(--rust);font-weight:600}
+  .lede{font-size:18.5px;max-width:60ch;color:#3b352b;font-weight:300}
+  .lede strong{font-weight:600;color:var(--ink)}
+  .tagstrip{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px}
+  .tag{font-family:var(--mono);font-size:11px;padding:6px 12px;border:1px solid var(--ink);border-radius:30px;letter-spacing:.03em}
+  .tag.fill{background:var(--ink);color:var(--paper)}
+
+  /* ---------- Sections ---------- */
+  section{margin-bottom:78px;scroll-margin-top:30px}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:24px;padding-bottom:14px;border-bottom:2px solid var(--ink)}
+  .sec-num{font-family:var(--mono);font-size:13px;color:var(--rust);font-weight:700}
+  .sec-head h3{font-family:var(--display);font-size:clamp(26px,4vw,38px);font-weight:700;letter-spacing:-.02em;line-height:1.05}
+  p{margin-bottom:16px;max-width:68ch}
+  .muted{color:#6b6253}
+
+  /* ---------- Priority bars ---------- */
+  .prios{display:grid;gap:12px;margin:8px 0 4px}
+  .prio{display:grid;grid-template-columns:30px 1fr;gap:14px;align-items:center}
+  .prio .rank{font-family:var(--mono);font-weight:700;font-size:18px;color:var(--rust)}
+  .prio .bar{position:relative;background:var(--paper-2);border:1px solid var(--line);border-radius:8px;padding:11px 16px;overflow:hidden}
+  .prio .bar .fillbar{position:absolute;inset:0;background:linear-gradient(90deg,rgba(192,70,31,.16),rgba(192,70,31,.02));z-index:0}
+  .prio .bar b{position:relative;z-index:1;font-weight:600;font-size:14.5px}
+  .prio .bar span{position:relative;z-index:1;display:block;font-size:12.5px;color:#6b6253;margin-top:2px}
+
+  /* ---------- Cards ---------- */
+  .grid{display:grid;gap:18px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .card{
+    background:var(--paper-2);border:1px solid var(--line);border-radius:14px;padding:22px;position:relative;
+    transition:.2s;
+  }
+  .card:hover{transform:translateY(-2px);box-shadow:0 10px 24px var(--shadow)}
+  .card h4{font-family:var(--display);font-size:18px;font-weight:600;margin-bottom:8px;display:flex;align-items:center;gap:9px}
+  .card h4 .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .card p{font-size:13.5px;margin-bottom:0;color:#4a4338}
+  .card .lab{font-family:var(--mono);font-size:9.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--rust-deep);margin-bottom:12px}
+
+  /* ---------- Diagram ---------- */
+  .diagram{background:var(--ink);border-radius:18px;padding:30px;margin:10px 0;color:var(--paper);overflow-x:auto}
+  .diagram svg{display:block;margin:0 auto;min-width:560px}
+
+  /* ---------- Component list ---------- */
+  .comp{border:1px solid var(--line);border-radius:13px;overflow:hidden;margin-bottom:14px;background:var(--paper-2)}
+  .comp summary{
+    cursor:pointer;list-style:none;padding:18px 22px;display:flex;align-items:center;gap:14px;
+    font-family:var(--display);font-size:18px;font-weight:600;transition:.15s;
+  }
+  .comp summary::-webkit-details-marker{display:none}
+  .comp summary:hover{background:var(--paper)}
+  .comp summary .ix{font-family:var(--mono);font-size:12px;color:var(--paper);background:var(--rust);width:30px;height:30px;border-radius:8px;display:grid;place-items:center;flex:none}
+  .comp summary .chev{margin-left:auto;transition:.25s;font-size:14px;color:var(--rust)}
+  .comp[open] summary .chev{transform:rotate(90deg)}
+  .comp .body{padding:4px 22px 22px 66px}
+  .comp .body p{font-size:14px}
+  .comp .stack{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+  .chip{font-family:var(--mono);font-size:10.5px;padding:4px 10px;background:var(--paper);border:1px solid var(--line);border-radius:20px}
+  .resp{font-size:13px;color:#5a5244;border-left:2px solid var(--rust);padding-left:14px;margin:12px 0}
+
+  /* ---------- Flow / pills ---------- */
+  .flow{display:flex;align-items:stretch;gap:0;flex-wrap:wrap;margin:6px 0}
+  .step{flex:1;min-width:140px;background:var(--paper-2);border:1px solid var(--line);padding:16px;border-radius:12px;position:relative;margin-bottom:24px}
+  .step .n{font-family:var(--mono);font-size:11px;color:var(--rust);font-weight:700}
+  .step h5{font-family:var(--display);font-size:15.5px;margin:5px 0 4px;font-weight:600}
+  .step p{font-size:12.5px;margin:0;color:#5a5244}
+  .arrow{display:grid;place-items:center;color:var(--rust);font-size:20px;padding:0 4px;margin-bottom:24px}
+
+  /* ---------- API table ---------- */
+  table{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0}
+  th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--line)}
+  th{font-family:var(--mono);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--rust-deep)}
+  td code,.ic{font-family:var(--mono);font-size:12px;background:var(--paper-2);padding:2px 7px;border-radius:5px;border:1px solid var(--line)}
+  tr:hover td{background:var(--paper-2)}
+  .method{font-family:var(--mono);font-weight:700;font-size:11px;padding:3px 8px;border-radius:5px;color:#fff}
+  .get{background:var(--moss)} .post{background:var(--rust)} .ws{background:var(--sky)} .del{background:var(--rust-deep)}
+
+  /* ---------- Schema block ---------- */
+  pre{background:var(--ink);color:#e8e0cf;border-radius:13px;padding:22px 24px;overflow-x:auto;font-family:var(--mono);font-size:12.5px;line-height:1.7;margin:8px 0}
+  pre .k{color:var(--gold)} pre .s{color:#9cc18a} pre .c{color:#7d7563;font-style:italic} pre .p{color:#d98a6a}
+
+  /* ---------- Checklist ---------- */
+  .phase{margin-bottom:26px}
+  .phase-h{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  .phase-h .pn{font-family:var(--mono);font-size:11px;background:var(--ink);color:var(--gold);padding:5px 11px;border-radius:6px;letter-spacing:.1em}
+  .phase-h h4{font-family:var(--display);font-size:20px;font-weight:600}
+  .phase-h .est{margin-left:auto;font-family:var(--mono);font-size:11px;color:#8a7c63}
+  .check{display:flex;gap:12px;align-items:flex-start;padding:10px 14px;border:1px solid var(--line);border-radius:10px;margin-bottom:7px;background:var(--paper-2);cursor:pointer;transition:.15s;user-select:none}
+  .check:hover{background:var(--paper)}
+  .check .box{width:20px;height:20px;border:2px solid var(--rust);border-radius:5px;flex:none;margin-top:1px;display:grid;place-items:center;transition:.15s}
+  .check .box::after{content:"✓";color:#fff;font-size:13px;font-weight:700;opacity:0;transform:scale(.4);transition:.15s}
+  .check.done .box{background:var(--rust);border-color:var(--rust)}
+  .check.done .box::after{opacity:1;transform:scale(1)}
+  .check.done .txt{text-decoration:line-through;color:#9a9082}
+  /* "Addressed but altered" — implemented, but in a different way than the spec called for.
+     Blue, no strike-through, glyph is ~ instead of ✓ so it reads as "approximate / partial". */
+  .check.altered{border-color:var(--sky);background:rgba(61,107,138,.07)}
+  .check.altered .box{background:var(--sky);border-color:var(--sky)}
+  .check.altered .box::after{content:"~";opacity:1;transform:scale(1);color:#fff;font-weight:700;font-size:14px;line-height:1}
+  .check.altered .txt{color:#2d4756}
+  .check.altered .txt b{color:var(--sky)}
+  .check .txt b{font-weight:600}
+  .check .txt span{display:block;font-size:12px;color:#6b6253;font-weight:300}
+  .check.altered .txt .note{display:block;margin-top:4px;font-size:11px;color:var(--sky);font-family:var(--mono);font-style:italic}
+  .check.done    .txt .note{display:block;margin-top:4px;font-size:11px;color:var(--moss);font-family:var(--mono);font-style:italic;text-decoration:none}
+  .progwrap{margin:6px 0 30px;background:var(--paper-2);border:1px solid var(--line);border-radius:30px;height:14px;overflow:hidden;position:relative}
+  .progwrap .pf{height:100%;width:0;background:linear-gradient(90deg,var(--rust),var(--gold));transition:.4s;border-radius:30px}
+  .progwrap .pf2{position:absolute;top:0;left:0;height:100%;background:linear-gradient(90deg,var(--sky),rgba(61,107,138,.35));transition:.4s;border-radius:30px;opacity:.55}
+  .proglab{font-family:var(--mono);font-size:11px;color:var(--rust-deep);margin-bottom:8px;display:flex;justify-content:space-between}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;margin:0 0 14px;padding:12px 16px;background:var(--paper-2);border:1px solid var(--line);border-radius:10px;font-family:var(--mono);font-size:11px}
+  .legend .li{display:flex;gap:8px;align-items:center}
+  .legend .sw{width:14px;height:14px;border-radius:4px;border:2px solid var(--rust);display:inline-block;flex:none}
+  .legend .sw.done{background:var(--rust)}
+  .legend .sw.alt{background:var(--sky);border-color:var(--sky)}
+
+  /* ---------- Callout ---------- */
+  .callout{background:linear-gradient(120deg,rgba(192,70,31,.07),rgba(202,160,74,.06));border:1px solid var(--line);border-left:4px solid var(--rust);border-radius:0 12px 12px 0;padding:18px 22px;margin:18px 0}
+  .callout .ct{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--rust-deep);margin-bottom:7px}
+  .callout p{font-size:14px;margin:0}
+
+  /* ---------- Footer ---------- */
+  footer{border-top:2px solid var(--ink);padding-top:22px;margin-top:30px;font-family:var(--mono);font-size:11px;color:#8a7c63;display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px}
+
+  .mobile-top{display:none}
+
+  @media(max-width:880px){
+    .wrap{grid-template-columns:1fr}
+    nav.toc{display:none}
+    main{padding:30px 20px 80px}
+    .g2,.g3{grid-template-columns:1fr}
+    .mobile-top{display:flex;position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:1px solid var(--line);padding:14px 20px;align-items:center;gap:10px;margin:-30px -20px 24px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ============ TOC ============ -->
+  <nav class="toc">
+    <div class="brand">
+      <div class="glyph">y◆</div>
+      <div>
+        <h1>yumuHub</h1>
+        <div class="sub">Spec · v0.2</div>
+      </div>
+    </div>
+    <div class="meta">Personal multi-agent<br>AI gateway · cross-device<br>Win10 (AtlasOS) + macOS<br>Drafted 2026 · DRAFT</div>
+    <ol id="tocList">
+      <li><a href="#overview" class="active">Overview &amp; Goals</a></li>
+      <li><a href="#principles">Design Principles</a></li>
+      <li><a href="#platforms">Platform Targets</a></li>
+      <li><a href="#architecture">System Architecture</a></li>
+      <li><a href="#components">Core Components</a></li>
+      <li><a href="#agents">Agents &amp; Keys</a></li>
+      <li><a href="#interagent">Inter-Agent Messaging</a></li>
+      <li><a href="#providers">Provider Layer</a></li>
+      <li><a href="#plugins">Plugin / Tool System</a></li>
+      <li><a href="#data">Data &amp; Sync</a></li>
+      <li><a href="#api">Internal API</a></li>
+      <li><a href="#security">Security Model</a></li>
+      <li><a href="#stack">Tech Stack</a></li>
+      <li><a href="#roadmap">Build Checklist</a></li>
+    </ol>
+  </nav>
+
+  <!-- ============ MAIN ============ -->
+  <main>
+    <div class="mobile-top">
+      <div class="glyph" style="width:28px;height:28px;font-size:12px">y◆</div>
+      <strong style="font-family:var(--display)">yumuHub Spec</strong>
+    </div>
+
+    <!-- HERO -->
+    <div class="hero">
+      <div class="kicker">Technical Specification</div>
+      <h2>A pocket gateway to <em>many minds.</em></h2>
+      <p class="lede">A <strong>personal, cross-device app</strong> that talks to any AI provider — Claude, OpenAI, and more — and runs a roster of <strong>genuinely independent agents</strong>, each carrying its own API key, personality, tools, and memory. Agents can <strong>message each other</strong> through a real bus, so delegating a big task to one never freezes the rest. Inspired by NanoClaw's "small enough to understand" ethos: extensible first, provider-agnostic, local-first, and simple to live with.</p>
+      <div class="tagstrip">
+        <span class="tag fill">Extensibility ◆ P1</span>
+        <span class="tag">Multi-provider ◆ P2</span>
+        <span class="tag">Local-first ◆ P3</span>
+        <span class="tag">Simplicity ◆ P4</span>
+      </div>
+    </div>
+
+    <!-- 1 OVERVIEW -->
+    <section id="overview">
+      <div class="sec-head"><span class="sec-num">01</span><h3>Overview &amp; Goals</h3></div>
+      <p>yumuHub is a single-user system for orchestrating multiple AI agents across Windows and macOS (with a clear path to mobile). Each <b>agent</b> is a self-contained configuration — model provider, its own API key, system prompt, enabled tools, and isolated memory — running as its <b>own independent runtime</b>. The app is the conductor; the agents are real, separate players that can also pass notes to each other.</p>
+
+      <div class="callout">
+        <div class="ct">Priorities — as you ranked them</div>
+        <div class="prios" style="margin-top:10px">
+          <div class="prio"><div class="rank">1</div><div class="bar"><div class="fillbar" style="width:100%"></div><b>Extensibility</b><span>Plugins, tools &amp; integrations are first-class. The system is a thin core + a wide plugin surface.</span></div></div>
+          <div class="prio"><div class="rank">2</div><div class="bar"><div class="fillbar" style="width:78%"></div><b>Multi-provider flexibility</b><span>Swap models per-agent in one tap. No provider lock-in; a normalized adapter layer.</span></div></div>
+          <div class="prio"><div class="rank">3</div><div class="bar"><div class="fillbar" style="width:54%"></div><b>Privacy / local-first</b><span>Keys, chats &amp; memory live on-device by default. Sync is opt-in &amp; end-to-end encrypted.</span></div></div>
+          <div class="prio"><div class="rank">4</div><div class="bar"><div class="fillbar" style="width:34%"></div><b>Simplicity</b><span>Sensible defaults so it "just works," without sacrificing the three goals above.</span></div></div>
+        </div>
+      </div>
+
+      <div class="grid g3" style="margin-top:22px">
+        <div class="card"><div class="lab">In Scope</div><p>Multi-agent chat · independent agent runtimes · inter-agent messaging · per-agent keys · provider switching · plugin tools · cross-device sync · local memory.</p></div>
+        <div class="card"><div class="lab">Out of Scope (v1)</div><p>Multi-user / team accounts · fully autonomous open-ended swarms · model fine-tuning · marketplace billing. Local models: supported but low-priority polish.</p></div>
+        <div class="card"><div class="lab">Success looks like</div><p>Hand Agent A a huge task; Agents B and C stay fully responsive and can even ask A for results — across Windows and your M1/M5 Macs.</p></div>
+      </div>
+    </section>
+
+    <!-- 2 PRINCIPLES -->
+    <section id="principles">
+      <div class="sec-head"><span class="sec-num">02</span><h3>Design Principles</h3></div>
+      <div class="grid g2">
+        <div class="card"><h4><span class="dot" style="background:var(--rust)"></span>Thin core, wide edges</h4><p>The kernel only routes messages, manages keys, and loads plugins. Everything else — providers, tools, UI panels — is a plugin. New capability = new plugin, never a core rewrite.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--sky)"></span>Provider-agnostic by contract</h4><p>Every model sits behind one <span class="ic">ProviderAdapter</span> interface. The app never speaks a vendor's raw API directly; adapters translate to/from a single internal message format.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--moss)"></span>The device is the source of truth</h4><p>Data is born local and encrypted. The optional sync server is a dumb encrypted blob store — it can never read your content or keys.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--gold)"></span>Independence per agent</h4><p>Borrowing NanoClaw's container ethos: each agent runs its own loop with sandboxed keys, memory, and tool permissions. A long task on one agent never blocks another — no shared-context bottleneck.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--rust-deep)"></span>Config is data, not code</h4><p>Agents, providers, and tool grants are declarative records you can export, version, and re-import. Reproducible setups, easy backups.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--ink)"></span>Graceful, observable failure</h4><p>Rate limits, dead keys, and timeouts surface clearly with retry/fallback, never silent hangs. Every request is traceable.</p></div>
+      </div>
+    </section>
+
+    <!-- 3 PLATFORMS -->
+    <section id="platforms">
+      <div class="sec-head"><span class="sec-num">03</span><h3>Platform Targets</h3></div>
+      <p>One codebase, native feel on each OS. <b>Tauri 2</b> is the recommended shell: it uses each OS's native webview (WebView2 on Windows, WebKit on macOS), ships tiny binaries, and shares a Rust core across targets — with a ready path to iOS/Android later without a rewrite.</p>
+      <div class="grid g3">
+        <div class="card"><div class="lab">Windows 10 · AtlasOS</div><p>x64 build via WebView2. AtlasOS is a debloated Win10 — fine for Tauri, just ensure the <span class="ic">Edge WebView2 runtime</span> is present (bundle the evergreen installer, since AtlasOS may strip it).</p></div>
+        <div class="card"><div class="lab">macOS · M1 &amp; M5</div><p>Both are Apple Silicon (arm64), so a <b>single</b> Apple-Silicon build covers M1 and M5 — no separate M5 work. Optionally ship a universal binary if you ever add Intel Macs.</p></div>
+        <div class="card"><div class="lab">Later · Mobile</div><p>Tauri 2 extends the same project to iOS/Android. Not in v1 scope, but the architecture won't fight you when you get there.</p></div>
+      </div>
+      <div class="callout"><div class="ct">Build matrix note</div><p>Cross-compiling to macOS requires a Mac to sign &amp; package; Windows builds are easiest on Windows or CI. A simple CI matrix (one macOS runner, one Windows runner) produces both artifacts on every release tag.</p></div>
+    </section>
+
+    <!-- 4 ARCHITECTURE -->
+    <section id="architecture">
+      <div class="sec-head"><span class="sec-num">04</span><h3>System Architecture</h3></div>
+      <p>A <b>local-first client</b> on each device holds the UI, a pool of independent agent runtimes, a message bus, and an encrypted vault. A small <b>sync relay</b> (self-hostable) moves encrypted blobs between devices. Providers are reached directly from the device — the relay never touches model traffic or plaintext.</p>
+      <div class="diagram">
+        <svg viewBox="0 0 720 430" xmlns="http://www.w3.org/2000/svg" font-family="Space Mono, monospace">
+          <defs>
+            <marker id="ah" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#caa04a"/></marker>
+            <style>.bx{fill:#1f1c17;stroke:#caa04a;stroke-width:1.2;rx:10}.bt{fill:#f4efe6;font-size:12px}.bs{fill:#caa04a;font-size:9px;letter-spacing:.1em}.ln{stroke:#caa04a;stroke-width:1.4;fill:none;opacity:.7}.lbl{fill:#b9a877;font-size:9px}</style>
+          </defs>
+
+          <!-- devices -->
+          <rect class="bx" x="20" y="30" width="150" height="60" rx="10"/>
+          <text class="bt" x="95" y="55" text-anchor="middle">Win10 · AtlasOS</text>
+          <text class="bs" x="95" y="72" text-anchor="middle">CLIENT</text>
+          <rect class="bx" x="20" y="110" width="150" height="60" rx="10"/>
+          <text class="bt" x="95" y="135" text-anchor="middle">macOS · M1</text>
+          <text class="bs" x="95" y="152" text-anchor="middle">CLIENT</text>
+          <rect class="bx" x="20" y="190" width="150" height="60" rx="10"/>
+          <text class="bt" x="95" y="215" text-anchor="middle">macOS · M5</text>
+          <text class="bs" x="95" y="232" text-anchor="middle">CLIENT</text>
+
+          <!-- core box -->
+          <rect x="250" y="20" width="230" height="280" rx="14" fill="none" stroke="#c0461f" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="365" y="40" text-anchor="middle" fill="#c0461f" font-size="10" letter-spacing=".15em">LOCAL CLIENT CORE</text>
+
+          <rect class="bx" x="270" y="55" width="190" height="40" rx="9"/>
+          <text class="bt" x="365" y="72" text-anchor="middle">Orchestrator / Router</text>
+          <text class="bs" x="365" y="86" text-anchor="middle">THIN KERNEL</text>
+
+          <!-- message bus -->
+          <rect class="bx" x="270" y="103" width="190" height="30" rx="8" stroke="#3d6b8a"/>
+          <text class="bt" x="365" y="122" text-anchor="middle" font-size="11" fill="#9cc9e6">◆ Message Bus ◆</text>
+
+          <!-- three independent agent runtimes -->
+          <rect class="bx" x="270" y="142" width="60" height="44" rx="8"/>
+          <text class="bt" x="300" y="160" text-anchor="middle" font-size="10">Agent A</text>
+          <text class="bs" x="300" y="174" text-anchor="middle" font-size="7">RUNTIME</text>
+          <rect class="bx" x="335" y="142" width="60" height="44" rx="8"/>
+          <text class="bt" x="365" y="160" text-anchor="middle" font-size="10">Agent B</text>
+          <text class="bs" x="365" y="174" text-anchor="middle" font-size="7">RUNTIME</text>
+          <rect class="bx" x="400" y="142" width="60" height="44" rx="8"/>
+          <text class="bt" x="430" y="160" text-anchor="middle" font-size="10">Agent C</text>
+          <text class="bs" x="430" y="174" text-anchor="middle" font-size="7">RUNTIME</text>
+          <!-- bus connectors -->
+          <path class="ln" stroke="#3d6b8a" d="M300,142 L300,133" marker-end="url(#ah)"/>
+          <path class="ln" stroke="#3d6b8a" d="M365,142 L365,133" marker-end="url(#ah)"/>
+          <path class="ln" stroke="#3d6b8a" d="M430,142 L430,133" marker-end="url(#ah)"/>
+          <path class="ln" stroke="#3d6b8a" d="M300,103 L300,95" marker-end="url(#ah)"/>
+
+          <rect class="bx" x="270" y="195" width="90" height="38" rx="8"/>
+          <text class="bt" x="315" y="212" text-anchor="middle" font-size="10">Vault</text>
+          <text class="bs" x="315" y="225" text-anchor="middle" font-size="7">KEYS · ENC</text>
+          <rect class="bx" x="370" y="195" width="90" height="38" rx="8"/>
+          <text class="bt" x="415" y="212" text-anchor="middle" font-size="10">Plugin Host</text>
+          <text class="bs" x="415" y="225" text-anchor="middle" font-size="7">TOOLS</text>
+
+          <rect class="bx" x="270" y="242" width="190" height="40" rx="8"/>
+          <text class="bt" x="365" y="259" text-anchor="middle" font-size="11">Provider Adapters</text>
+          <text class="bs" x="365" y="273" text-anchor="middle">NORMALIZE I/O</text>
+
+          <!-- providers -->
+          <rect class="bx" x="560" y="40" width="140" height="42" rx="9"/>
+          <text class="bt" x="630" y="65" text-anchor="middle" font-size="11">Anthropic / Claude</text>
+          <rect class="bx" x="560" y="95" width="140" height="42" rx="9"/>
+          <text class="bt" x="630" y="120" text-anchor="middle" font-size="11">OpenAI</text>
+          <rect class="bx" x="560" y="150" width="140" height="42" rx="9"/>
+          <text class="bt" x="630" y="175" text-anchor="middle" font-size="11">OpenRouter / Local</text>
+
+          <!-- sync relay -->
+          <rect class="bx" x="270" y="340" width="190" height="56" rx="10" stroke="#3d6b8a"/>
+          <text class="bt" x="365" y="363" text-anchor="middle">Sync Relay</text>
+          <text class="bs" x="365" y="380" text-anchor="middle" fill="#7ba6c4">ENCRYPTED BLOBS ONLY · SELF-HOST</text>
+
+          <!-- links device->core -->
+          <path class="ln" d="M170,60 C210,60 215,75 268,78" marker-end="url(#ah)"/>
+          <path class="ln" d="M170,140 C210,135 230,90 268,82" marker-end="url(#ah)"/>
+          <path class="ln" d="M170,220 C215,210 225,95 268,84" marker-end="url(#ah)"/>
+          <!-- adapters -> providers -->
+          <path class="ln" d="M462,250 C520,235 530,70 558,62" marker-end="url(#ah)"/>
+          <path class="ln" d="M462,256 C520,230 535,120 558,116" marker-end="url(#ah)"/>
+          <path class="ln" d="M462,262 C520,250 535,175 558,171" marker-end="url(#ah)"/>
+          <text class="lbl" x="498" y="150" transform="rotate(-32 498 150)">direct · per-agent key</text>
+          <!-- sync -->
+          <path class="ln" stroke="#3d6b8a" d="M250,150 C150,150 95,260 95,340 C95,360 200,372 268,370" marker-end="url(#ah)"/>
+          <path class="ln" stroke="#3d6b8a" d="M365,300 L365,338" marker-end="url(#ah)"/>
+        </svg>
+      </div>
+      <p class="muted" style="font-size:13px">Key insight: model traffic flows <b>device → provider</b> directly using the agent's own key. The relay only ever sees encrypted blobs, preserving the local-first/privacy goal even when syncing.</p>
+    </section>
+
+    <!-- 5 COMPONENTS -->
+    <section id="components">
+      <div class="sec-head"><span class="sec-num">05</span><h3>Core Components</h3></div>
+      <p>Six components, deliberately small. The kernel is tiny; capability lives in plugins and adapters.</p>
+
+      <details class="comp" open>
+        <summary><span class="ix">01</span>Orchestrator (Kernel)<span class="chev">▸</span></summary>
+        <div class="body">
+          <p>Routes a user message to the active agent, assembles context (history + memory + tool defs), invokes the right provider adapter, and streams the response back. Handles tool-call loops, retries, and fallback chains.</p>
+          <div class="resp">Responsibility: message lifecycle, no business logic. ~ a few hundred lines, "small enough to understand."</div>
+          <div class="stack"><span class="chip">event-driven</span><span class="chip">streaming</span><span class="chip">tool-loop</span></div>
+        </div>
+      </details>
+
+      <details class="comp">
+        <summary><span class="ix">02</span>Agent Runtime<span class="chev">▸</span></summary>
+        <div class="body">
+          <p>Instantiates each agent as its <b>own independent worker</b> — separate execution context, message queue, and tool-loop. Binds the agent's key, system prompt, model, memory scope, and granted tools. Because each runs on its own loop, a long-running task on one agent <b>never blocks</b> the others.</p>
+          <div class="resp">This is the direct fix for the single-orchestrator bottleneck: agents are real, concurrent workers — not personas a single model role-plays in one shared context.</div>
+          <div class="stack"><span class="chip">own worker/loop</span><span class="chip">concurrent</span><span class="chip">scoped memory</span><span class="chip">non-blocking</span></div>
+        </div>
+      </details>
+
+      <details class="comp">
+        <summary><span class="ix">03</span>Message Bus<span class="chev">▸</span></summary>
+        <div class="body">
+          <p>An in-process pub/sub + addressed-message router that lets agents and the UI talk to each other asynchronously. Agent A can send a request to Agent B and either await a reply or fire-and-forget; B processes it on its own loop and answers when ready.</p>
+          <div class="resp">Decoupling via the bus is what keeps the system responsive: messages queue per-recipient, so a busy agent backs up its <i>own</i> queue, not everyone's.</div>
+          <div class="stack"><span class="chip">pub/sub</span><span class="chip">per-agent inbox</span><span class="chip">async req/reply</span></div>
+        </div>
+      </details>
+
+      <details class="comp">
+        <summary><span class="ix">04</span>Plugin Host<span class="chev">▸</span></summary>
+        <div class="body">
+          <p>Discovers, validates, and loads plugins (tools, provider adapters, UI panels). Exposes a stable plugin API and a manifest/permission contract. This is the <b>primary extensibility surface</b> — your #1 priority.</p>
+          <div class="resp">A plugin declares: name, type, permissions, input/output schema, and a handler. The host wires it into agents that opt in.</div>
+          <div class="stack"><span class="chip">manifest</span><span class="chip">capability tokens</span><span class="chip">hot-load</span></div>
+        </div>
+      </details>
+
+      <details class="comp">
+        <summary><span class="ix">05</span>Provider Adapters<span class="chev">▸</span></summary>
+        <div class="body">
+          <p>One adapter per provider, all conforming to a single interface. Translate the internal message format to vendor requests and normalize responses, tool-calls, token usage, and errors back.</p>
+          <div class="resp">Adding a provider never touches the kernel — it's just another plugin implementing <span class="ic">ProviderAdapter</span>.</div>
+          <div class="stack"><span class="chip">Claude</span><span class="chip">OpenAI</span><span class="chip">OpenRouter</span><span class="chip">Ollama (local)</span></div>
+        </div>
+      </details>
+
+      <details class="comp">
+        <summary><span class="ix">06</span>Vault &amp; Store<span class="chev">▸</span></summary>
+        <div class="body">
+          <p><b>Vault</b> holds API keys and secrets, encrypted with a device key in the OS keystore. <b>Store</b> holds conversations, agent configs, and per-agent memory in a local encrypted DB.</p>
+          <div class="resp">Keys never leave the device unencrypted and never pass through the sync relay in plaintext.</div>
+          <div class="stack"><span class="chip">OS keystore</span><span class="chip">SQLCipher</span><span class="chip">per-agent scope</span></div>
+        </div>
+      </details>
+
+      <details class="comp">
+        <summary><span class="ix">07</span>Sync Engine<span class="chev">▸</span></summary>
+        <div class="body">
+          <p>Optional. Encrypts state client-side, pushes/pulls deltas via the relay, and merges with CRDTs so edits from two devices reconcile without conflict. Disable it entirely to stay fully local.</p>
+          <div class="resp">The relay is a "dumb" encrypted blob store — zero-knowledge by design.</div>
+          <div class="stack"><span class="chip">E2E encrypted</span><span class="chip">CRDT merge</span><span class="chip">self-hostable</span></div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 6 AGENTS -->
+    <section id="agents">
+      <div class="sec-head"><span class="sec-num">06</span><h3>Agents &amp; Per-Key Model</h3></div>
+      <p>An <b>agent</b> is a declarative record. Multiple agents can run side-by-side, each with its own provider and key, so you can isolate spend, limits, and personas cleanly.</p>
+      <pre><span class="c">// agent config record — exportable JSON</span>
+{
+  <span class="k">"id"</span>: <span class="s">"agt_research"</span>,
+  <span class="k">"name"</span>: <span class="s">"Research Buddy"</span>,
+  <span class="k">"provider"</span>: <span class="s">"anthropic"</span>,
+  <span class="k">"model"</span>: <span class="s">"claude-opus-4-7"</span>,
+  <span class="k">"keyRef"</span>: <span class="s">"vault://keys/anthropic_personal"</span>,  <span class="c">// indirection, never the raw key</span>
+  <span class="k">"systemPrompt"</span>: <span class="s">"You are a meticulous research assistant…"</span>,
+  <span class="k">"memoryScope"</span>: <span class="s">"agt_research"</span>,                <span class="c">// isolated</span>
+  <span class="k">"tools"</span>: [<span class="s">"web_search"</span>, <span class="s">"file_read"</span>, <span class="s">"calc"</span>, <span class="s">"send_to_agent"</span>, <span class="s">"spawn_agent"</span>],
+  <span class="k">"parentId"</span>: <span class="k">null</span>,                        <span class="c">// set on spawned children</span>
+  <span class="k">"budget"</span>: { <span class="k">"maxChildren"</span>: <span class="p">8</span> },        <span class="c">// children inherit, minus spawn_agent</span>
+  <span class="k">"params"</span>: { <span class="k">"temperature"</span>: <span class="p">0.4</span>, <span class="k">"maxTokens"</span>: <span class="p">4096</span> },
+  <span class="k">"fallback"</span>: { <span class="k">"provider"</span>: <span class="s">"openai"</span>, <span class="k">"model"</span>: <span class="s">"gpt-5"</span>, <span class="k">"keyRef"</span>: <span class="s">"vault://keys/openai_personal"</span> }
+}</pre>
+      <div class="grid g3" style="margin-top:18px">
+        <div class="card"><div class="lab">Per-agent key</div><p>Each agent references one key by handle. Track spend &amp; rate limits per agent; revoke one without touching others.</p></div>
+        <div class="card"><div class="lab">Isolation</div><p>Memory &amp; tool grants are scoped to the agent id. No cross-agent leakage of context or secrets.</p></div>
+        <div class="card"><div class="lab">Fallback chain</div><p>If the primary key/model fails, the orchestrator retries the declared fallback automatically.</p></div>
+      </div>
+    </section>
+
+    <!-- 7 INTER-AGENT MESSAGING -->
+    <section id="interagent">
+      <div class="sec-head"><span class="sec-num">07</span><h3>Inter-Agent Messaging</h3></div>
+      <div class="callout" style="border-left-color:var(--sky)">
+        <div class="ct" style="color:var(--sky)">The problem this solves</div>
+        <p>In the swarm setups you tried, there was effectively <b>one model role-playing several "agents" inside a single shared context</b>. Give one persona a big task and the whole conversation stalls, because there was never more than one worker. yumuHub makes each agent a <b>real, separate worker</b> that communicates over a bus — so concurrency is genuine, not simulated.</p>
+      </div>
+
+      <p>Each agent owns an <b>inbox</b>. Sending a message to another agent is just dropping an envelope on the bus addressed to its id. The recipient handles it on its own loop and replies when ready. The sender chooses the mode:</p>
+
+      <div class="grid g3" style="margin:6px 0 18px">
+        <div class="card"><h4><span class="dot" style="background:var(--moss)"></span>Ask &amp; await</h4><p>Sender pauses <i>its own</i> turn for a reply (with timeout). Others keep running. Good for "B, summarize this file for me."</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--sky)"></span>Fire &amp; forget</h4><p>Hand off a task and move on. The reply (or failure) arrives later as a new inbox message. Good for long jobs.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--gold)"></span>Broadcast</h4><p>Post to a topic many agents subscribe to — e.g. "research findings" — for loose coordination.</p></div>
+      </div>
+
+      <p>Delegation is exposed to the model as an ordinary <b>tool</b> (e.g. <span class="ic">send_to_agent</span>), so an agent can decide to consult another mid-reasoning. Any agent can also <b>spawn a sub-agent</b> on the fly via <span class="ic">spawn_agent</span> — covered in 7.1 — to fan out a task and gather results.</p>
+
+      <pre><span class="c">// envelope on the bus — addressed, async, traceable</span>
+{
+  <span class="k">"id"</span>: <span class="s">"msg_8f3a"</span>,
+  <span class="k">"from"</span>: <span class="s">"agt_research"</span>,
+  <span class="k">"to"</span>: <span class="s">"agt_writer"</span>,        <span class="c">// or "topic:findings" for broadcast</span>
+  <span class="k">"mode"</span>: <span class="s">"ask"</span>,               <span class="c">// ask | notify | broadcast</span>
+  <span class="k">"replyTo"</span>: <span class="s">"msg_8f3a"</span>,       <span class="c">// correlates the response</span>
+  <span class="k">"deadlineMs"</span>: <span class="p">120000</span>,
+  <span class="k">"body"</span>: { <span class="k">"task"</span>: <span class="s">"Draft an intro from these notes…"</span> }
+}</pre>
+
+      <div class="diagram" style="margin-top:18px">
+        <svg viewBox="0 0 700 250" xmlns="http://www.w3.org/2000/svg" font-family="Space Mono, monospace">
+          <defs>
+            <marker id="ah2" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#9cc9e6"/></marker>
+            <marker id="ah3" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#caa04a"/></marker>
+            <style>.b2{fill:#1f1c17;stroke:#caa04a;stroke-width:1.2}.t2{fill:#f4efe6;font-size:12px}.s2{fill:#caa04a;font-size:8px;letter-spacing:.08em}.lb2{fill:#9cc9e6;font-size:9px}</style>
+          </defs>
+          <!-- bus bar -->
+          <rect class="b2" x="120" y="110" width="460" height="34" rx="9" stroke="#3d6b8a"/>
+          <text class="t2" x="350" y="131" text-anchor="middle" fill="#9cc9e6">◆  M E S S A G E   B U S  ◆</text>
+
+          <!-- agents -->
+          <rect class="b2" x="60" y="30" width="120" height="50" rx="10"/>
+          <text class="t2" x="120" y="50" text-anchor="middle">Agent A</text>
+          <text class="s2" x="120" y="66" text-anchor="middle">RESEARCH · busy</text>
+          <rect class="b2" x="290" y="30" width="120" height="50" rx="10"/>
+          <text class="t2" x="350" y="50" text-anchor="middle">Agent B</text>
+          <text class="s2" x="350" y="66" text-anchor="middle">WRITER · idle</text>
+          <rect class="b2" x="520" y="30" width="120" height="50" rx="10"/>
+          <text class="t2" x="580" y="50" text-anchor="middle">Agent C</text>
+          <text class="s2" x="580" y="66" text-anchor="middle">CODER · idle</text>
+
+          <!-- inboxes -->
+          <rect class="b2" x="60" y="175" width="120" height="40" rx="8" stroke="#4a5a3a"/>
+          <text class="t2" x="120" y="199" text-anchor="middle" font-size="10">Inbox A</text>
+          <rect class="b2" x="290" y="175" width="120" height="40" rx="8" stroke="#4a5a3a"/>
+          <text class="t2" x="350" y="199" text-anchor="middle" font-size="10">Inbox B</text>
+          <rect class="b2" x="520" y="175" width="120" height="40" rx="8" stroke="#4a5a3a"/>
+          <text class="t2" x="580" y="199" text-anchor="middle" font-size="10">Inbox C</text>
+
+          <!-- A sends to B via bus -->
+          <path d="M120,80 L120,108" stroke="#9cc9e6" stroke-width="1.5" fill="none" marker-end="url(#ah2)"/>
+          <text class="lb2" x="128" y="98">ask→B</text>
+          <path d="M350,144 L350,173" stroke="#9cc9e6" stroke-width="1.5" fill="none" marker-end="url(#ah2)"/>
+          <!-- B replies -->
+          <path d="M380,175 C420,150 410,100 360,82" stroke="#caa04a" stroke-width="1.3" fill="none" opacity=".8" marker-end="url(#ah3)"/>
+          <text x="430" y="130" fill="#b9a877" font-size="9">reply→A</text>
+          <!-- C stays free -->
+          <path d="M580,80 L580,108" stroke="#3d6b8a" stroke-width="1.2" stroke-dasharray="3 3" fill="none" opacity=".6"/>
+          <text x="592" y="160" fill="#7d9a6a" font-size="9">stays responsive</text>
+        </svg>
+      </div>
+      <p class="muted" style="font-size:13px">A is mid-task and still delegates to B; C is untouched and fully available. No shared context means no global stall.</p>
+
+      <h4 style="font-family:var(--display);font-size:22px;font-weight:600;margin:34px 0 8px;border-top:1px dashed var(--line);padding-top:24px">7.1 · Sub-Agent Spawning</h4>
+      <p>A top-level agent may create a child agent at runtime via the <span class="ic">spawn_agent</span> tool. The child is a full independent worker (own loop, inbox, key, memory scope) — not a persona. Spawning is <b>single-level</b>: children are structurally barred from spawning, so the tree is at most one layer deep.</p>
+
+      <div class="grid g3" style="margin:6px 0 18px">
+        <div class="card"><h4><span class="dot" style="background:var(--rust)"></span>Spawn</h4><p>Parent calls <span class="ic">spawn_agent</span> with a config (inline or by template id). Returns a <span class="ic">childId</span> the parent can message like any peer.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--moss)"></span>Inherit, minus spawn</h4><p>Child clones the parent's provider, key, and tools — but the host <b>strips <span class="ic">spawn_agent</span></b> from every child's grant set. A child cannot spawn, by capability, not just by budget.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--gold)"></span>Lifecycle</h4><p>Ephemeral by default: child is reaped when its task resolves or the parent dies (cascade). Can be marked <span class="ic">persist:true</span> to outlive the turn.</p></div>
+      </div>
+
+      <p>Spawned agents register on the same bus, so a parent fans out work and collects replies through normal ask/notify/broadcast. Because children lack the spawn capability, fan-out stops at one level — no grandchildren.</p>
+
+      <pre><span class="c">// spawn_agent tool call — child is a real worker, scoped by the parent</span>
+{
+  <span class="k">"tool"</span>: <span class="s">"spawn_agent"</span>,
+  <span class="k">"args"</span>: {
+    <span class="k">"from"</span>: <span class="s">"agt_research"</span>,            <span class="c">// parent (sets lineage)</span>
+    <span class="k">"template"</span>: <span class="s">"summarizer"</span>,         <span class="c">// or inline "config": {...}</span>
+    <span class="k">"overrides"</span>: {
+      <span class="k">"model"</span>: <span class="s">"claude-haiku-4-5-20251001"</span>,  <span class="c">// cheaper child for grunt work</span>
+      <span class="k">"tools"</span>: [<span class="s">"file_read"</span>]          <span class="c">// subset of parent's grants; spawn_agent always stripped</span>
+    },
+    <span class="k">"persist"</span>: <span class="k">false</span>,                  <span class="c">// reaped when task resolves</span>
+    <span class="k">"budget"</span>: { <span class="k">"maxChildren"</span>: <span class="p">8</span>, <span class="k">"maxTokens"</span>: <span class="p">200000</span> }  <span class="c">// no depth: children can't spawn</span>
+  }
+}</pre>
+
+      <div class="callout"><div class="ct">Guardrails — runaway prevention</div><p>Children never receive the <span class="ic">spawn_agent</span> grant, so recursion is impossible by design — the tree is capped at one level. Each spawn still carries a <b>budget</b>: max live children per parent and an aggregate token/cost ceiling. Hitting a limit fails the <span class="ic">spawn_agent</span> call (surfaced to the parent) rather than silently forking. A global live-agent cap and a kill-tree action backstop the whole hub.</p></div>
+
+      <div class="diagram" style="margin-top:18px">
+        <svg viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg" font-family="Space Mono, monospace">
+          <defs>
+            <marker id="ah4" markerWidth="9" markerHeight="9" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#caa04a"/></marker>
+            <style>.b3{fill:#1f1c17;stroke:#caa04a;stroke-width:1.2}.t3{fill:#f4efe6;font-size:11px}.s3{fill:#caa04a;font-size:8px;letter-spacing:.08em}</style>
+          </defs>
+          <!-- root -->
+          <rect class="b3" x="290" y="20" width="120" height="46" rx="10"/>
+          <text class="t3" x="350" y="40" text-anchor="middle">Agent A</text>
+          <text class="s3" x="350" y="55" text-anchor="middle">ROOT · can spawn</text>
+          <!-- children -->
+          <rect class="b3" x="110" y="120" width="130" height="46" rx="10"/>
+          <text class="t3" x="175" y="140" text-anchor="middle">Child A1</text>
+          <text class="s3" x="175" y="155" text-anchor="middle">no spawn_agent</text>
+          <rect class="b3" x="285" y="120" width="130" height="46" rx="10"/>
+          <text class="t3" x="350" y="140" text-anchor="middle">Child A2</text>
+          <text class="s3" x="350" y="155" text-anchor="middle">no spawn_agent</text>
+          <rect class="b3" x="460" y="120" width="130" height="46" rx="10"/>
+          <text class="t3" x="525" y="140" text-anchor="middle">Child A3</text>
+          <text class="s3" x="525" y="155" text-anchor="middle">no spawn_agent</text>
+          <!-- edges -->
+          <path d="M315,66 L185,118" stroke="#caa04a" stroke-width="1.4" fill="none" marker-end="url(#ah4)"/>
+          <path d="M350,66 L350,118" stroke="#caa04a" stroke-width="1.4" fill="none" marker-end="url(#ah4)"/>
+          <path d="M385,66 L515,118" stroke="#caa04a" stroke-width="1.4" fill="none" marker-end="url(#ah4)"/>
+          <!-- label -->
+          <text x="350" y="192" text-anchor="middle" fill="#b9a877" font-size="9">single level · children lack spawn capability · cascade-reap on parent exit</text>
+        </svg>
+      </div>
+      <p class="muted" style="font-size:13px">Flat fan-out: each child is an independent worker, but none can spawn further. Budgets cap children-per-parent and total spend; killing the parent reaps its children.</p>
+    </section>
+
+    <!-- 8 PROVIDERS -->
+    <section id="providers">
+      <div class="sec-head"><span class="sec-num">08</span><h3>Provider Layer</h3></div>
+      <p>Everything passes through a normalized internal message format. Adapters are the only place that knows a vendor's quirks.</p>
+      <div class="flow">
+        <div class="step"><div class="n">01</div><h5>Internal request</h5><p>Unified message + tool defs + params.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">02</div><h5>Adapter encode</h5><p>Map to vendor schema &amp; auth header.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">03</div><h5>Provider call</h5><p>Direct from device with agent key.</p></div>
+        <div class="arrow">→</div>
+        <div class="step"><div class="n">04</div><h5>Adapter decode</h5><p>Normalize text, tool-calls, usage, errors.</p></div>
+      </div>
+      <pre><span class="c">// the single contract every provider implements</span>
+<span class="k">interface</span> ProviderAdapter {
+  id: <span class="k">string</span>;
+  listModels(): Promise&lt;Model[]&gt;;
+  send(req: InternalRequest, key: SecretRef): AsyncStream&lt;InternalChunk&gt;;
+  normalizeError(e: <span class="k">unknown</span>): NormalizedError;
+}</pre>
+      <div class="callout"><div class="ct">Why this serves Priority #2</div><p>Swapping a model is a one-field change on the agent record (<span class="ic">provider</span> + <span class="ic">model</span> + <span class="ic">keyRef</span>). No code path in the kernel changes — that's true multi-provider flexibility.</p></div>
+    </section>
+
+    <!-- 9 PLUGINS -->
+    <section id="plugins">
+      <div class="sec-head"><span class="sec-num">09</span><h3>Plugin / Tool System</h3></div>
+      <p>Your top priority. Tools, providers, and even UI panels are plugins sharing one manifest + permission model. A plugin is granted to specific agents — never global by default.</p>
+      <pre><span class="c">// plugin manifest</span>
+{
+  <span class="k">"name"</span>: <span class="s">"web_search"</span>,
+  <span class="k">"type"</span>: <span class="s">"tool"</span>,                 <span class="c">// tool | provider | panel</span>
+  <span class="k">"version"</span>: <span class="s">"1.2.0"</span>,
+  <span class="k">"permissions"</span>: [<span class="s">"net:https"</span>],   <span class="c">// capability tokens, user-approved</span>
+  <span class="k">"schema"</span>: {
+    <span class="k">"input"</span>:  { <span class="k">"query"</span>: <span class="s">"string"</span>, <span class="k">"limit"</span>: <span class="s">"number?"</span> },
+    <span class="k">"output"</span>: { <span class="k">"results"</span>: <span class="s">"Result[]"</span> }
+  },
+  <span class="k">"entry"</span>: <span class="s">"./handler.js"</span>
+}</pre>
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card"><h4><span class="dot" style="background:var(--rust)"></span>Capability-scoped</h4><p>Each plugin declares the permissions it needs (<span class="ic">net</span>, <span class="ic">fs:read</span>, <span class="ic">clipboard</span>…). You approve once; the host enforces at runtime.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--moss)"></span>Per-agent grants</h4><p>Adding <span class="ic">web_search</span> to Agent A doesn't expose it to Agent B. Tool surfaces stay isolated.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--sky)"></span>Typed I/O</h4><p>Schemas double as the tool definitions sent to the model and as validation guards on results.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--gold)"></span>Hot-loadable</h4><p>Drop in a plugin and enable it without rebuilding the app — extensibility without redeploy.</p></div>
+      </div>
+    </section>
+
+    <!-- 8 DATA -->
+    <section id="data">
+      <div class="sec-head"><span class="sec-num">10</span><h3>Data Model &amp; Sync</h3></div>
+      <p>Local encrypted DB is the source of truth. Sync is an opt-in CRDT layer over a zero-knowledge relay.</p>
+      <table>
+        <thead><tr><th>Entity</th><th>Holds</th><th>Scope</th><th>Synced?</th></tr></thead>
+        <tbody>
+          <tr><td><code>Agent</code></td><td>Config: provider, model, prompt, tools, params, parentId, budget</td><td>Global</td><td>Yes (persisted agents only)</td></tr>
+          <tr><td><code>Key</code></td><td>Provider API secret</td><td>Vault</td><td>Opt-in, E2E only</td></tr>
+          <tr><td><code>Conversation</code></td><td>Messages, tool-calls, timestamps</td><td>Per agent</td><td>Yes (encrypted)</td></tr>
+          <tr><td><code>Memory</code></td><td>Distilled facts / embeddings</td><td>Per agent</td><td>Yes (encrypted)</td></tr>
+          <tr><td><code>Plugin</code></td><td>Manifest + granted permissions</td><td>Global</td><td>Manifest only</td></tr>
+          <tr><td><code>AgentMessage</code></td><td>Inter-agent envelopes (from, to, mode, body)</td><td>Per agent inbox</td><td>Yes (encrypted)</td></tr>
+          <tr><td><code>Device</code></td><td>Sync identity &amp; public key</td><td>Account</td><td>Metadata</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><div class="ct">Sync flow</div><p>Encrypt locally → push deltas to relay → other devices pull &amp; CRDT-merge → decrypt locally. The relay stores opaque ciphertext; it cannot read content, even in a breach.</p></div>
+    </section>
+
+    <!-- 9 API -->
+    <section id="api">
+      <div class="sec-head"><span class="sec-num">11</span><h3>Internal API Surface</h3></div>
+      <p>The client core exposes a local API (in-process or localhost) the UI and plugins call. Stable contract, versioned.</p>
+      <table>
+        <thead><tr><th>Method</th><th>Endpoint</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><span class="method get">GET</span></td><td><code>/agents</code></td><td>List agent configs</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/agents</code></td><td>Create / update an agent record</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/agents/:id/chat</code></td><td>Send message; streams response + tool-calls</td></tr>
+          <tr><td><span class="method ws">WS</span></td><td><code>/agents/:id/stream</code></td><td>Token stream &amp; tool-loop events</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/vault/keys</code></td><td>Store a key (returns a keyRef handle)</td></tr>
+          <tr><td><span class="method get">GET</span></td><td><code>/providers</code></td><td>List adapters &amp; their models</td></tr>
+          <tr><td><span class="method get">GET</span></td><td><code>/plugins</code></td><td>List installed plugins &amp; permissions</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/plugins/:name/grant</code></td><td>Grant a plugin to an agent</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/agents/:id/message</code></td><td>Send an envelope to another agent (ask / notify / broadcast)</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/agents/:id/spawn</code></td><td>Spawn a sub-agent (template/inline + overrides + budget)</td></tr>
+          <tr><td><span class="method del">DEL</span></td><td><code>/agents/:id/tree</code></td><td>Kill an agent and cascade-reap its descendants</td></tr>
+          <tr><td><span class="method ws">WS</span></td><td><code>/agents/:id/inbox</code></td><td>Subscribe to an agent's incoming messages &amp; replies</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/sync/push</code></td><td>Push encrypted deltas</td></tr>
+          <tr><td><span class="method del">DEL</span></td><td><code>/agents/:id</code></td><td>Delete an agent &amp; its scoped data</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 10 SECURITY -->
+    <section id="security">
+      <div class="sec-head"><span class="sec-num">12</span><h3>Security &amp; Privacy Model</h3></div>
+      <div class="grid g2">
+        <div class="card"><h4><span class="dot" style="background:var(--rust)"></span>Keys by reference</h4><p>The UI and configs never hold raw secrets — only <span class="ic">vault://</span> handles. The vault dereferences just-in-time at send.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--moss)"></span>Encryption at rest</h4><p>DB via SQLCipher; secrets in the OS keystore (Keychain on macOS / DPAPI on Windows). Master key never persisted in plaintext.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--sky)"></span>Zero-knowledge sync</h4><p>End-to-end encryption with per-device keys. The relay sees ciphertext + metadata only.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--gold)"></span>Plugin sandboxing</h4><p>Capability tokens gate what a plugin may touch. Network/file access is explicit and per-grant — NanoClaw-style isolation.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--rust-deep)"></span>Direct provider calls</h4><p>Model traffic goes device→provider; no middleman server logs your prompts.</p></div>
+        <div class="card"><h4><span class="dot" style="background:var(--ink)"></span>Bounded spawning</h4><p>Children inherit a narrowed permission set with <span class="ic">spawn_agent</span> always stripped — so spawning is single-level by design. Per-spawn budgets, a global live-agent cap, and a kill-tree action backstop it.</p></div>
+      </div>
+    </section>
+
+    <!-- 13 STACK -->
+    <section id="stack">
+      <div class="sec-head"><span class="sec-num">13</span><h3>Suggested Tech Stack</h3></div>
+      <p>Picks that favor one shared codebase across Windows + macOS, strong local-first tooling, and a clean plugin boundary. Swap freely — these are starting points.</p>
+      <div class="grid g2">
+        <div class="card"><div class="lab">App shell</div><p><b>Tauri 2</b> + <b>React</b> or <b>Svelte</b>. Native webview per OS (WebView2 on Win10/AtlasOS, WebKit on macOS), tiny binaries, Rust core. Same project later targets iOS/Android.</p></div>
+        <div class="card"><div class="lab">Core / runtime</div><p><b>Rust</b> for the kernel, agent workers &amp; message bus (real concurrency via async tasks/threads), with a <b>TypeScript</b> plugin SDK. Streaming via SSE/WebSocket.</p></div>
+        <div class="card"><div class="lab">Agent workers &amp; bus</div><p>Each agent = an async task with its own channel (e.g. Tokio + mpsc) — genuine non-blocking concurrency, not one shared loop.</p></div>
+        <div class="card"><div class="lab">Local store</div><p><b>SQLite + SQLCipher</b>; <b>Automerge / Yjs</b> for CRDT sync; OS keystore (Keychain / DPAPI) for secrets.</p></div>
+        <div class="card"><div class="lab">Sync relay</div><p>Tiny <b>Hono / Fastify</b> (or Rust <b>Axum</b>) blob service. Self-hostable in one container.</p></div>
+        <div class="card"><div class="lab">Provider SDKs</div><p>Official <b>Anthropic</b> &amp; <b>OpenAI</b> SDKs behind adapters; <b>OpenRouter</b> for breadth; <b>Ollama</b> for local models (low-priority, slots in as another adapter).</p></div>
+      </div>
+      <div class="callout"><div class="ct">Why Rust for the core here</div><p>Your top need — many agents that don't block each other — is fundamentally a concurrency problem. Rust's async model gives each agent a real, cheap worker, and Tauri already uses Rust, so the core and the shell share one language across both OSes.</p></div>
+    </section>
+
+    <!-- 14 ROADMAP / CHECKLIST -->
+    <section id="roadmap">
+      <div class="sec-head"><span class="sec-num">14</span><h3>Build Checklist</h3></div>
+      <p>Reflects the state of the running app, not the original draft intent. Tap any unchecked item to toggle it.</p>
+
+      <div class="legend">
+        <div class="li"><span class="sw done"></span><span><b>Done</b> — shipped as the spec described</span></div>
+        <div class="li"><span class="sw alt"></span><span><b>Addressed but altered</b> — shipped in a different shape than the spec called for</span></div>
+        <div class="li"><span class="sw"></span><span><b>To-do</b> — not yet implemented</span></div>
+      </div>
+
+      <div class="proglab"><span>Overall progress</span><span id="pctTxt">0% · 0 / 0</span></div>
+      <div class="progwrap"><div class="pf2" id="progFill2"></div><div class="pf" id="progFill"></div></div>
+
+      <div class="phase">
+        <div class="phase-h"><span class="pn">PHASE 0</span><h4>Foundations</h4><span class="est">~ thin core</span></div>
+        <label class="check altered"><span class="box"></span><span class="txt"><b>Tauri 2 scaffold · Win + macOS</b><span>One project; verify WebView2 on AtlasOS &amp; arm64 build on M1/M5.</span><span class="note">macOS only. Builds with `npx tauri build`; Windows path never validated.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Define internal message format</b><span>Single schema for messages, tool-calls, usage.</span><span class="note">History envelope in YumuHub.jsx (role/user/assistant/tool, toolCalls, toolResults); bus envelope {from,to,mode,body,ts}.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Build the orchestrator kernel</b><span>Route → context → adapter → stream, with tool loop.</span><span class="note">AgentRuntime.chat → _toolLoop with streaming, parallel tool exec, loop detection, idle abort.</span></span></label>
+        <label class="check altered"><span class="box"></span><span class="txt"><b>Local encrypted store + vault</b><span>SQLCipher DB + OS keystore for secrets.</span><span class="note">Plain localStorage instead of SQLCipher; Vault class with `vault://keys/<handle>` references — keys not encrypted at rest. Production gap.</span></span></label>
+      </div>
+
+      <div class="phase">
+        <div class="phase-h"><span class="pn">PHASE 1</span><h4>Agents, Bus &amp; Providers</h4><span class="est">P2 unlocked</span></div>
+        <label class="check altered"><span class="box"></span><span class="txt"><b>Independent agent workers</b><span>Each agent = its own async task/loop; non-blocking.</span><span class="note">JS async per AgentRuntime instance, all in the WebView's single event loop — not Rust + Tokio mpsc as planned. Concurrency is cooperative.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Message bus + per-agent inbox</b><span>Pub/sub + addressed routing; the anti-bottleneck core.</span><span class="note">MessageBus class: per-id inboxes, topic subscriptions (`chat:&lt;id&gt;` used by ChatRegistry), onMessage listeners.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Agent config record</b><span>Per-agent key, prompt, params, isolation.</span><span class="note">{id, name, provider, model, keyRef, systemPrompt, tools, params, ephemeral}. Persisted to `yumuhub:agents`.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>ProviderAdapter interface</b><span>The one contract all models implement.</span><span class="note">`providers.&lt;name&gt;.send(history, systemPrompt, model, apiKey, tools, signal, onDelta)` — uniform across providers.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Claude + OpenAI adapters</b><span>First two providers, direct from device.</span><span class="note">Plus z.ai (OpenAI-compatible) and a Mock provider for offline testing. All streaming via shared readSSE.</span></span></label>
+        <label class="check altered"><span class="box"></span><span class="txt"><b>Fallback chains</b><span>Auto-retry on key/model failure.</span><span class="note">`config.fallback` is honored in AgentRuntime.chat error handler, but there's no UI to configure it. Dormant code path.</span></span></label>
+      </div>
+
+      <div class="phase">
+        <div class="phase-h"><span class="pn">PHASE 2</span><h4>Extensibility &amp; Delegation</h4><span class="est">P1 — core goal</span></div>
+        <label class="check altered"><span class="box"></span><span class="txt"><b>Plugin host + manifest spec</b><span>Discover, validate, load; capability tokens.</span><span class="note">PluginHost class works, but tools are hardcoded JS in `registerBuiltinTools` — no manifest discovery, no hot-load, no capability tokens. Discovery layer missing.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Per-agent tool grants</b><span>Scoped, approved permissions.</span><span class="note">`agent.tools[]` filtered by PluginHost.getForAgent. Now managed from the Tools view (collapsible categories, global on/off + per-agent expansion).</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>send_to_agent delegation tool</b><span>Ask / notify / broadcast across the bus.</span><span class="note">Registered as a built-in tool; calls target runtime's chat and bubbles parentResetIdleTimer for chained activity.</span></span></label>
+        <label class="check altered"><span class="box"></span><span class="txt"><b>spawn_agent (single-level)</b><span>Children spawned without spawn_agent; budgets (children/tokens), cascade-reap, kill-tree.</span><span class="note">Spawning works; children get `tools` minus `spawn_agent` (so single-level). `remove_agent` tool lets the parent reap explicit children. No token/child budgets, no cascade-reap.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>First tools: search, file, calc</b><span>Prove the plugin surface end-to-end.</span><span class="note">web_search (DuckDuckGo), file_read (file-picker), calc — all registered.</span></span></label>
+        <label class="check"><span class="box"></span><span class="txt"><b>Plugin sandbox</b><span>Worker / WASM isolation for untrusted code.</span></span></label>
+      </div>
+
+      <div class="phase">
+        <div class="phase-h"><span class="pn">PHASE 3</span><h4>Cross-device &amp; Polish</h4><span class="est">P3 + P4</span></div>
+        <label class="check"><span class="box"></span><span class="txt"><b>CRDT sync engine</b><span>Encrypt → push → merge → decrypt.</span></span></label>
+        <label class="check"><span class="box"></span><span class="txt"><b>Self-hostable relay</b><span>Zero-knowledge blob store in a container.</span></span></label>
+        <label class="check"><span class="box"></span><span class="txt"><b>Win10 + macOS UI parity</b><span>Same agents on AtlasOS and M1/M5; CI build matrix.</span></span></label>
+        <label class="check altered"><span class="box"></span><span class="txt"><b>Sensible defaults &amp; onboarding</b><span>"Just works" first-run, P4.</span><span class="note">Seed agents (Assistant/Research/Coder/Self-Editor) auto-created on first launch; one default chat seeded per agent via ChatRegistry.migrateFromLegacy. No real walkthrough/onboarding flow.</span></span></label>
+        <label class="check"><span class="box"></span><span class="txt"><b>Local request log / spend view</b><span>Per-agent tokens, cost, latency.</span></span></label>
+        <label class="check"><span class="box"></span><span class="txt"><b>Local model adapter (Ollama)</b><span>Low priority — slots in as one more provider.</span></span></label>
+      </div>
+
+      <div class="phase">
+        <div class="phase-h"><span class="pn">PHASE 4</span><h4>Shipped beyond the original spec</h4><span class="est">live in v0.3</span></div>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Streaming responses</b><span>Token-by-token render via SSE, blinking cursor + typing dots, Stop button to abort mid-stream.</span><span class="note">Shared readSSE helper handles all 3 real providers + mock. notifyStream coalesces to rAF so big histories stay responsive.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Idle timeout + loop detection</b><span>Aborts a chat that goes silent; injects [LOOP DETECTED] when the same tool call repeats.</span><span class="note">Tunable in Settings (idleSec, maxTurns, loopLimit). Defaults 300/50/3.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Chats &amp; Projects (multi-conversation)</b><span>ChatRegistry on top of the bus. Chats can be grouped into projects, renamed, archived, deleted.</span><span class="note">Per-chat history at `yumuhub:chat:&lt;id&gt;`. Chat list lives in the leftmost sidebar (replaced the separate middle column).</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Unread notification dot</b><span>Each chat tracks lastSeen vs lastActivity. Color customizable in Settings.</span><span class="note">Default `#7c3aed` (violet); native &lt;input type="color"&gt; in Settings updates it live.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Mini-chat per agent in Agents tab</b><span>Each agent card has an inline input that fires off a new chat without leaving the Agents view.</span><span class="note">Reply lands in the sidebar with an unread dot. Dispatches to many agents from one screen.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Self-Diagnose button</b><span>Per-chat button that sends the app's own source to the active agent for code review.</span><span class="note">DIAGNOSE_SOURCE strips the styles object before sending so smaller models fit.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>↻ Handoff button + skill</b><span>Compress the current chat into a structured summary and seed the next session.</span><span class="note">Renders the summary as a gold dashed pill. Mirrored as a Claude Code skill at `~/.claude/skills/yumuhub-handoff/`.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Universal system prompt (yumuHub.md)</b><span>One file at `~/yumuHub.md` prepended to every agent's system prompt.</span><span class="note">Editable in Settings; "Open in Finder" button reveals the file. Bypassed when caller passes opts.systemPrompt.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Headless inbox / outbox protocol</b><span>Drop `~/yumuhub-inbox.json` to send a message from the CLI; reply appends to `~/yumuhub-outbox.jsonl`.</span><span class="note">Per-chat serial queue; accepts either `{chat_id, content}` or `{agent_id, content}` (creates a chat on demand).</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Self-editing sandbox</b><span>Rust commands `beta_read / beta_write / beta_list / clone_sandbox` confined to `~/yumuhub-beta`.</span><span class="note">Self-Editor seed agent has `sandbox_*` tools; auto-saves `.bak`. Build of the beta is still manual.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Settings tab</b><span>Idle timeout, max turns, loop threshold, inbox poll cadence, unread color, universal prompt, Improve source — all in one page.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Improve source code (in-app)</b><span>Lives in Settings. Picks one of your agents to perform the rewrite — no direct Anthropic call.</span><span class="note">Pre-fills with OWN_SOURCE; uses runtime.chat with `noTools: true` and a fixed system prompt.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Tools view redesign</b><span>Collapsible categories, global on/off checkbox per tool, expandable per-agent grant grid.</span><span class="note">toolGate singleton (`yumuhub:toolsDisabled`); PluginHost.execute and AgentRuntime.chat both enforce it.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Collapsible sidebar</b><span>Sidebar collapses to a 44px icon strip; state persists across launches.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Native macOS title bar</b><span>Restored after `titleBarStyle: Overlay` left the window unable to be dragged.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>list_agents / remove_agent tools</b><span>Mother agent can enumerate and clean up ephemeral children from chat.</span><span class="note">remove_agent refuses non-ephemeral seeds.</span></span></label>
+        <label class="check done"><span class="box"></span><span class="txt"><b>Parallel tool execution</b><span>_toolLoop runs all tool calls in one assistant turn via Promise.all — three spawn_agent calls run concurrently.</span></span></label>
+      </div>
+    </section>
+
+    <footer>
+      <span>yumuHub · Technical Specification · v0.3 · checklist reflects shipped state (2026-05-24)</span>
+      <span>Inspired by NanoClaw's local-first, isolation-first ethos</span>
+    </footer>
+  </main>
+</div>
+
+<script>
+  // ---- TOC scroll-spy ----
+  const links=[...document.querySelectorAll('.toc a')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href')));
+  const spy=new IntersectionObserver((es)=>{
+    es.forEach(e=>{
+      if(e.isIntersecting){
+        const id='#'+e.target.id;
+        links.forEach(l=>l.classList.toggle('active',l.getAttribute('href')===id));
+      }
+    });
+  },{rootMargin:'-20% 0px -70% 0px'});
+  secs.forEach(s=>s&&spy.observe(s));
+
+  // ---- Checklist + progress ----
+  // Two segments in the progress bar: rust fill = "done" (shipped as specified),
+  // sky fill behind = "done + altered" (anything that's been addressed in any form).
+  const checks=[...document.querySelectorAll('.check')];
+  const fill=document.getElementById('progFill');
+  const fill2=document.getElementById('progFill2');
+  const txt=document.getElementById('pctTxt');
+  function refresh(){
+    const done=checks.filter(c=>c.classList.contains('done')).length;
+    const alt =checks.filter(c=>c.classList.contains('altered')).length;
+    const n=checks.length;
+    const donePct=Math.round(done/n*100);
+    const addressedPct=Math.round((done+alt)/n*100);
+    fill.style.width=donePct+'%';
+    fill2.style.width=addressedPct+'%';
+    txt.textContent=donePct+'% done · '+addressedPct+'% addressed · '+done+' done + '+alt+' altered / '+n;
+  }
+  // Click cycles: empty → done → empty. Clicking an altered item collapses it to "done" first,
+  // then toggling works normally (so the spec stays honest about what's actually working).
+  checks.forEach(c=>c.addEventListener('click',()=>{
+    if(c.classList.contains('altered')){ c.classList.remove('altered'); c.classList.add('done'); }
+    else { c.classList.toggle('done'); }
+    refresh();
+  }));
+  refresh();
+</script>
+</body>
+</html>
