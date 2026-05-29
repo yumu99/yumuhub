@@ -3744,6 +3744,16 @@ The smallest change that fixes it. Name the function and what to change. No mult
     onSelectChat?.(newChat.id);
   };
 
+  // Retry: after a failed send the last user message is left at the tail (the
+  // empty assistant placeholder was dropped), so replay it — same rewind path
+  // as Regenerate. Gives a one-click recovery instead of re-typing.
+  const retry = () => {
+    if (busy) return;
+    for (let k = history.length - 1; k >= 0; k--) {
+      if (history[k]?.role === "user") { regenerate(k); return; }
+    }
+  };
+
   return (
     <div style={styles.chatContainer}
       onDrop={onFileDrop}
@@ -4019,7 +4029,14 @@ The smallest change that fixes it. Name the function and what to change. No mult
           </div>
         )}
 
-        {error && <div style={styles.errorBanner}>⚠ {error}</div>}
+        {error && (
+          <div style={styles.errorBanner}>
+            <span style={{ flex: 1, minWidth: 0 }}>⚠ {error}</span>
+            {!busy && history.some(m => m.role === "user") && (
+              <button onClick={retry} style={styles.errorRetryBtn} title="Replay the last message">↻ Retry</button>
+            )}
+          </div>
+        )}
         <div ref={endRef} />
       </div>
       {showJump && (
@@ -7283,7 +7300,8 @@ const styles = {
   typing:         { display: "flex", gap: 5, padding: "6px 0", alignItems: "center" },
   typingDot:      { width: 7, height: 7, borderRadius: "50%", background: "#8a7c63", display: "inline-block", animation: "blink 1.2s infinite both" },
   toolStatusInline: { fontFamily: fonts.mono, fontSize: 11, color: c.rust, display: "flex", alignItems: "center", gap: 6, padding: "4px 0" },
-  errorBanner:    { background: "rgba(192,70,31,0.1)", border: `1px solid ${c.rust}`, borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: c.rustDeep, marginBottom: 12 },
+  errorBanner:    { background: "rgba(192,70,31,0.1)", border: `1px solid ${c.rust}`, borderRadius: 8, padding: "10px 14px", fontSize: 12.5, color: c.rustDeep, marginBottom: 12, display: "flex", alignItems: "center", gap: 10 },
+  errorRetryBtn:  { flexShrink: 0, fontFamily: fonts.mono, fontSize: 10, color: c.paper, background: c.rust, border: "none", borderRadius: 6, padding: "5px 12px", cursor: "pointer", letterSpacing: "0.04em" },
   chatInput:      { padding: "16px 24px", borderTop: borderLight, display: "flex", gap: 10, background: c.paper, flexShrink: 0, alignItems: "center" },
   attachBtn:      { width: 36, height: 36, borderRadius: 10, border: borderLight, background: c.paper2, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 },
   attachmentBar:  { display: "flex", flexWrap: "wrap", gap: 6, padding: "8px 24px 0", background: c.paper, borderTop: borderLight },
