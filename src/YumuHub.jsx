@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useReducer, Component } from "react";
+import { useState, useEffect, useRef, useCallback, useReducer, Component, memo } from "react";
 import OWN_SOURCE from "./YumuHub.jsx?raw";
 
 const DIAGNOSE_SOURCE = (() => {
@@ -2718,6 +2718,119 @@ function detectMedia(result) {
   return null;
 }
 
+// ─── Lightweight Markdown renderer (no deps) ───
+// Renders assistant messages with the Markdown subset that matters in chat:
+// fenced code blocks (with a copy button), inline code, **bold**, *italic*,
+// [links](url), # headings, bullet/numbered lists, > blockquotes, and ---.
+// Built from React elements (never dangerouslySetInnerHTML) so there's no XSS
+// surface. Kept in-house on purpose — preserves the single-file / self-edit
+// architecture instead of pulling in react-markdown. Intraword `_` is NOT
+// treated as emphasis so snake_case tool names (send_to_agent) stay intact.
+function mdInline(text, kp) {
+  const out = [];
+  let i = 0, last = 0, k = 0;
+  const flush = (end) => { if (end > last) out.push(text.slice(last, end)); };
+  while (i < text.length) {
+    const ch = text[i];
+    if (ch === "[") {                                   // [text](url)
+      const m = /^\[([^\]]+)\]\(([^)\s]+)\)/.exec(text.slice(i));
+      if (m) { flush(i); out.push(<a key={`${kp}-${k++}`} href={m[2]} target="_blank" rel="noreferrer" style={styles.mdLink}>{m[1]}</a>); i += m[0].length; last = i; continue; }
+    }
+    if (ch === "*" && text[i + 1] === "*") {            // **bold**
+      const end = text.indexOf("**", i + 2);
+      if (end > i + 2) { flush(i); out.push(<strong key={`${kp}-${k++}`}>{text.slice(i + 2, end)}</strong>); i = end + 2; last = i; continue; }
+    }
+    if (ch === "*" && text[i + 1] !== " " && text[i + 1] !== "*") {  // *italic* (no leading space)
+      const end = text.indexOf("*", i + 1);
+      if (end > i + 1 && text[end - 1] !== " ") { flush(i); out.push(<em key={`${kp}-${k++}`}>{text.slice(i + 1, end)}</em>); i = end + 1; last = i; continue; }
+    }
+    if (ch === "`") {                                   // `inline code`
+      const end = text.indexOf("`", i + 1);
+      if (end > i + 1) { flush(i); out.push(<code key={`${kp}-${k++}`} style={styles.mdInlineCode}>{text.slice(i + 1, end)}</code>); i = end + 1; last = i; continue; }
+    }
+    i++;
+  }
+  flush(text.length);
+  return out;
+}
+
+function CodeBlock({ lang, code }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => { try { navigator.clipboard.writeText(code); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} };
+  return (
+    <div style={styles.mdCodeWrap}>
+      <div style={styles.mdCodeBar}>
+        <span style={styles.mdCodeLang}>{lang || "code"}</span>
+        <button className="mdCodeCopy" onClick={copy} style={styles.mdCodeCopy}>{copied ? "✓ Copied" : "Copy"}</button>
+      </div>
+      <pre style={styles.mdCodePre}><code>{code}</code></pre>
+    </div>
+  );
+}
+
+function MdProse({ text, kp }) {
+  const lines = text.split("\n");
+  const blocks = [];
+  let i = 0, b = 0;
+  const isSpecial = (ln) => /^\s*$/.test(ln) || /^#{1,4}\s/.test(ln) || /^\s*([-*_])\1\1+\s*$/.test(ln) || /^\s*>\s?/.test(ln) || /^\s*[-*+]\s+/.test(ln) || /^\s*\d+\.\s+/.test(ln);
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*$/.test(line)) { i++; continue; }
+    const h = /^(#{1,4})\s+(.*)$/.exec(line);
+    if (h) { const lvl = h[1].length; const Tag = `h${Math.min(lvl + 2, 6)}`; const sz = [16.5, 15, 14, 13.5][lvl - 1] || 13.5; blocks.push(<Tag key={`${kp}-h${b++}`} style={{ ...styles.mdHeading, fontSize: sz }}>{mdInline(h[2], `${kp}h${b}`)}</Tag>); i++; continue; }
+    if (/^\s*([-*_])\1\1+\s*$/.test(line)) { blocks.push(<hr key={`${kp}-r${b++}`} style={styles.mdHr} />); i++; continue; }
+    if (/^\s*>\s?/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^\s*>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, "")); i++; }
+      blocks.push(<blockquote key={`${kp}-q${b++}`} style={styles.mdQuote}>{mdInline(buf.join("\n"), `${kp}q${b}`)}</blockquote>);
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*[-*+]\s+/, "")); i++; }
+      blocks.push(<ul key={`${kp}-u${b++}`} style={styles.mdList}>{items.map((it, j) => <li key={j} style={styles.mdLi}>{mdInline(it, `${kp}u${b}-${j}`)}</li>)}</ul>);
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { items.push(lines[i].replace(/^\s*\d+\.\s+/, "")); i++; }
+      blocks.push(<ol key={`${kp}-o${b++}`} style={styles.mdList}>{items.map((it, j) => <li key={j} style={styles.mdLi}>{mdInline(it, `${kp}o${b}-${j}`)}</li>)}</ol>);
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && !isSpecial(lines[i])) { para.push(lines[i]); i++; }
+    const nodes = [];
+    para.forEach((ln, j) => { if (j > 0) nodes.push(<br key={`br${j}`} />); nodes.push(...mdInline(ln, `${kp}p${b}-${j}`)); });
+    blocks.push(<p key={`${kp}-p${b++}`} style={styles.mdPara}>{nodes}</p>);
+  }
+  return blocks;
+}
+
+const Markdown = memo(function Markdown({ text }) {
+  if (!text) return null;
+  const src = text.replace(/\r\n/g, "\n");
+  const segs = [];
+  const fence = /```([^\n`]*)\n?([\s\S]*?)```/g;
+  let last = 0, m;
+  while ((m = fence.exec(src)) !== null) {
+    if (m.index > last) segs.push({ t: "p", v: src.slice(last, m.index) });
+    segs.push({ t: "c", lang: m[1].trim(), code: m[2].replace(/\n$/, "") });
+    last = fence.lastIndex;
+  }
+  if (last < src.length) segs.push({ t: "p", v: src.slice(last) });
+  return <div style={styles.md}>{segs.map((s, j) => s.t === "c"
+    ? <CodeBlock key={j} lang={s.lang} code={s.code} />
+    : <MdProse key={j} text={s.v} kp={`s${j}`} />)}</div>;
+});
+
+// Hover "Copy" button shown under assistant messages.
+function CopyBtn({ text }) {
+  const [done, setDone] = useState(false);
+  return <button className="msgActionBtn" style={styles.msgActionBtn}
+    onClick={() => { try { navigator.clipboard.writeText(text); setDone(true); setTimeout(() => setDone(false), 1500); } catch {} }}>
+    {done ? "✓ Copied" : "Copy"}</button>;
+}
+
 function ToolCallCard({ toolCall, result }) {
   const [open, setOpen] = useState(false);
   const pending = result === undefined;
@@ -3590,14 +3703,15 @@ The smallest change that fixes it. Name the function and what to change. No mult
             if (!msg.content && !msg.streaming && visibleToolCalls.length === 0) return null;
             return (
               <div key={i} style={{ ...styles.message, ...styles.messageAssistant }}>
-                <div style={styles.msgBubbleAssistant}>
+                <div className="msgBubble" style={styles.msgBubbleAssistant}>
                   <div style={styles.msgSender}>{agent?.name || "Agent"}</div>
-                  {msg.content && <div style={styles.msgText}>{msg.content}{msg.streaming && <span style={styles.streamCursor}>▎</span>}</div>}
+                  {msg.content && <div style={styles.msgMd}><Markdown text={msg.content} />{msg.streaming && <span style={styles.streamCursor}>▎</span>}</div>}
                   {msg.streaming && !msg.content && <div style={styles.typing}><span style={{ ...styles.typingDot, animationDelay: "0s" }} /><span style={{ ...styles.typingDot, animationDelay: "0.2s" }} /><span style={{ ...styles.typingDot, animationDelay: "0.4s" }} /></div>}
                   {visibleToolCalls.map((tc, j) => {
                     const res = toolResults.find(r => r.toolCallId === tc.id);
                     return <ToolCallCard key={j} toolCall={tc} result={res?.result} />;
                   })}
+                  {!msg.streaming && msg.content && <div className="msgActions" style={styles.msgActions}><CopyBtn text={msg.content} /></div>}
                 </div>
               </div>
             );
@@ -6582,6 +6696,9 @@ export default function YumuHub() {
         @keyframes blink { 0%,80%,100%{opacity:0} 40%{opacity:1} }
         input:focus, select:focus, textarea:focus { outline: none; border-color: #c0461f !important; }
         ::-webkit-scrollbar { width: 9px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #d4c6ad; border-radius: 3px; border-right: 3px solid transparent; background-clip: padding-box; }
+        .msgActions { opacity: 0; transition: opacity 0.12s; }
+        .msgBubble:hover .msgActions { opacity: 1; }
+        .msgActionBtn:hover, .mdCodeCopy:hover { border-color: #c0461f !important; color: #c0461f !important; }
       `}</style>
       <Sidebar agents={state.agents} runtimes={runtimesRef.current}
         view={state.view}
@@ -6726,6 +6843,24 @@ const styles = {
   msgBubbleAssistant: { background: c.paper2, border: borderLight, padding: "12px 16px", borderRadius: "16px 16px 16px 4px", maxWidth: "72%", fontSize: 13.5, lineHeight: 1.6 },
   msgSender:      { fontFamily: fonts.mono, fontSize: 9.5, color: c.rust, letterSpacing: "0.1em", marginBottom: 4, textTransform: "uppercase" },
   msgText:        { whiteSpace: "pre-wrap", wordBreak: "break-word" },
+  // Markdown rendering (assistant messages)
+  msgMd:          { wordBreak: "break-word" },
+  md:             { display: "flex", flexDirection: "column", gap: 8 },
+  mdPara:         { margin: 0, lineHeight: 1.6 },
+  mdHeading:      { fontFamily: fonts.display, fontWeight: 700, lineHeight: 1.3, margin: "2px 0", color: c.ink },
+  mdList:         { margin: 0, paddingLeft: 22, display: "flex", flexDirection: "column", gap: 3 },
+  mdLi:           { lineHeight: 1.55 },
+  mdQuote:        { borderLeft: `3px solid ${c.rust}`, paddingLeft: 12, color: "#6b6150", fontStyle: "italic", margin: "2px 0" },
+  mdHr:           { border: "none", borderTop: `1px solid ${c.line}`, margin: "4px 0" },
+  mdLink:         { color: c.rust, textDecoration: "underline", wordBreak: "break-all" },
+  mdInlineCode:   { fontFamily: fonts.mono, fontSize: "0.86em", background: "rgba(192,70,31,0.10)", color: c.rustDeep, padding: "1px 5px", borderRadius: 5 },
+  mdCodeWrap:     { borderRadius: 8, overflow: "hidden", border: `1px solid ${c.line}`, margin: "2px 0" },
+  mdCodeBar:      { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 6px 4px 12px", background: "#241f1a" },
+  mdCodeLang:     { fontFamily: fonts.mono, fontSize: 9.5, letterSpacing: "0.1em", color: "#b6a98f", textTransform: "uppercase" },
+  mdCodeCopy:     { fontFamily: fonts.mono, fontSize: 9.5, color: "#d8cdb6", background: "transparent", border: "1px solid #4a4239", borderRadius: 5, padding: "2px 9px", cursor: "pointer", letterSpacing: "0.04em", transition: "0.12s" },
+  mdCodePre:      { background: c.ink, color: "#e8e0cf", padding: "10px 12px", fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, overflow: "auto" },
+  msgActions:     { display: "flex", gap: 6, marginTop: 8 },
+  msgActionBtn:   { fontFamily: fonts.mono, fontSize: 9.5, color: "#8a7c63", background: "transparent", border: `1px solid ${c.line}`, borderRadius: 6, padding: "3px 9px", cursor: "pointer", letterSpacing: "0.04em", transition: "0.12s" },
   typing:         { display: "flex", gap: 5, padding: "6px 0", alignItems: "center" },
   typingDot:      { width: 7, height: 7, borderRadius: "50%", background: "#8a7c63", display: "inline-block", animation: "blink 1.2s infinite both" },
   toolStatusInline: { fontFamily: fonts.mono, fontSize: 11, color: c.rust, display: "flex", alignItems: "center", gap: 6, padding: "4px 0" },
