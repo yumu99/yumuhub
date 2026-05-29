@@ -3279,12 +3279,14 @@ function ChatView({ chat, runtime, allAgents, registry, draftResponder, onPromot
   const [showJump, setShowJump] = useState(false);
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [editingIdx, setEditingIdx] = useState(null);   // history index of the user message being edited
+  const [editDraft, setEditDraft] = useState("");
 
   // Draft mode = no chat yet, but a responder is pre-selected. Sidebar entry
   // is created lazily on first send (so empty Chat clicks don't pollute it).
   const isDraft = !chat && !!draftResponder;
 
-  useEffect(() => { setTitleDraft(chat?.title || ""); setEditingTitle(false); setStickToBottom(true); setCustomizeOpen(false); }, [chat?.id]);
+  useEffect(() => { setTitleDraft(chat?.title || ""); setEditingTitle(false); setStickToBottom(true); setCustomizeOpen(false); setEditingIdx(null); setEditDraft(""); }, [chat?.id]);
   // Auto-scroll to bottom only if the user is already there (or just opened the chat).
   // If they scrolled up to read older messages, leave them alone and show a "Jump to latest" pill.
   const slotHistory = chat ? runtime?.getHistory?.(chat.id) : null;
@@ -3513,6 +3515,38 @@ The smallest change that fixes it. Name the function and what to change. No mult
 
   const history = (slotHistory || []).filter(Boolean);
 
+  // Regenerate: rewind to the user turn that produced the assistant message at
+  // `idx` and replay it — runtime.chat() re-pushes the user message and streams
+  // a fresh reply. Truncating the slot first drops the old reply (and any tool
+  // turns after the user message) so history stays consistent.
+  const regenerate = async (idx) => {
+    if (!chat || !runtime || busy) return;
+    let u = idx;
+    while (u >= 0 && history[u]?.role !== "user") u--;
+    if (u < 0) return;                          // no preceding user turn to replay
+    const userContent = history[u].content;
+    setError(null);
+    runtime.setHistory(chat.id, history.slice(0, u));
+    setStickToBottom(true);
+    if (agent) actionLog.startHarness(agent.id);
+    try { await runtime.chat(userContent, { chatId: chat.id }); } catch (e) { setError(e.message); }
+  };
+
+  // Edit & resend: replace a user message's text and replay from there, dropping
+  // everything that followed (matches ChatGPT/Claude rewind semantics).
+  const startEdit = (idx, text) => { setEditingIdx(idx); setEditDraft(text); };
+  const cancelEdit = () => { setEditingIdx(null); setEditDraft(""); };
+  const submitEdit = async (idx) => {
+    const text = editDraft.trim();
+    if (!chat || !runtime || busy || !text) return;
+    setEditingIdx(null); setEditDraft("");
+    setError(null);
+    runtime.setHistory(chat.id, history.slice(0, idx));
+    setStickToBottom(true);
+    if (agent) actionLog.startHarness(agent.id);
+    try { await runtime.chat(text, { chatId: chat.id }); } catch (e) { setError(e.message); }
+  };
+
   return (
     <div style={styles.chatContainer}
       onDrop={onFileDrop}
@@ -3674,17 +3708,45 @@ The smallest change that fixes it. Name the function and what to change. No mult
 
           if (msg.role === "user") {
             const contentParts = Array.isArray(msg.content) ? msg.content : [{ type: "text", text: msg.content }];
+            const editable = typeof msg.content === "string";   // skip multimodal — editing would drop attachments
+            if (editingIdx === i) {
+              return (
+                <div key={i} className="msgRow" style={{ ...styles.message, ...styles.messageUser }}>
+                  <div style={styles.msgEditCol}>
+                    <textarea autoFocus value={editDraft}
+                      onChange={e => setEditDraft(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitEdit(i); }
+                        else if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
+                      }}
+                      rows={Math.min(12, editDraft.split("\n").length + 1)}
+                      style={styles.msgEditArea} />
+                    <div style={styles.msgEditBtns}>
+                      <button className="msgActionBtn" style={styles.msgActionBtn} onClick={cancelEdit}>Cancel</button>
+                      <button className="msgSaveBtn" style={{ ...styles.msgActionBtn, ...styles.msgEditSave }} onClick={() => submitEdit(i)} title="Resend from here (⌘/Ctrl+Enter)">Send</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
             return (
-              <div key={i} style={{ ...styles.message, ...styles.messageUser }}>
-                <div style={styles.msgBubbleUser}>
-                  {contentParts.map((part, pi) => {
-                    if (part.type === "image") return (
-                      <img key={pi} src={`data:${part.mime || "image/png"};base64,${part.base64}`}
-                        alt={part.name || "pasted image"}
-                        style={{ maxWidth: "100%", maxHeight: 320, borderRadius: 8, marginBottom: 6, display: "block" }} />
-                    );
-                    return part.text ? <div key={pi} style={styles.msgText}>{part.text}</div> : null;
-                  })}
+              <div key={i} className="msgRow" style={{ ...styles.message, ...styles.messageUser }}>
+                <div style={styles.msgUserCol}>
+                  <div className="msgBubble" style={{ ...styles.msgBubbleUser, maxWidth: "100%" }}>
+                    {contentParts.map((part, pi) => {
+                      if (part.type === "image") return (
+                        <img key={pi} src={`data:${part.mime || "image/png"};base64,${part.base64}`}
+                          alt={part.name || "pasted image"}
+                          style={{ maxWidth: "100%", maxHeight: 320, borderRadius: 8, marginBottom: 6, display: "block" }} />
+                      );
+                      return part.text ? <div key={pi} style={styles.msgText}>{part.text}</div> : null;
+                    })}
+                  </div>
+                  {editable && !busy && (
+                    <div className="msgActions" style={{ ...styles.msgActions, justifyContent: "flex-end" }}>
+                      <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => startEdit(i, msg.content)} title="Edit and resend">Edit</button>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -3702,7 +3764,7 @@ The smallest change that fixes it. Name the function and what to change. No mult
             const visibleToolCalls = (msg.toolCalls || []).filter(tc => !pluginHost.get(tc.name)?.harnessOnly);
             if (!msg.content && !msg.streaming && visibleToolCalls.length === 0) return null;
             return (
-              <div key={i} style={{ ...styles.message, ...styles.messageAssistant }}>
+              <div key={i} className="msgRow" style={{ ...styles.message, ...styles.messageAssistant }}>
                 <div className="msgBubble" style={styles.msgBubbleAssistant}>
                   <div style={styles.msgSender}>{agent?.name || "Agent"}</div>
                   {msg.content && <div style={styles.msgMd}><Markdown text={msg.content} />{msg.streaming && <span style={styles.streamCursor}>▎</span>}</div>}
@@ -3711,7 +3773,14 @@ The smallest change that fixes it. Name the function and what to change. No mult
                     const res = toolResults.find(r => r.toolCallId === tc.id);
                     return <ToolCallCard key={j} toolCall={tc} result={res?.result} />;
                   })}
-                  {!msg.streaming && msg.content && <div className="msgActions" style={styles.msgActions}><CopyBtn text={msg.content} /></div>}
+                  {!msg.streaming && msg.content && (
+                    <div className="msgActions" style={styles.msgActions}>
+                      <CopyBtn text={msg.content} />
+                      {!busy && i === history.length - 1 && (
+                        <button className="msgActionBtn" style={styles.msgActionBtn} onClick={() => regenerate(i)} title="Regenerate this response">↻ Regenerate</button>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -6697,8 +6766,9 @@ export default function YumuHub() {
         input:focus, select:focus, textarea:focus { outline: none; border-color: #c0461f !important; }
         ::-webkit-scrollbar { width: 9px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: #d4c6ad; border-radius: 3px; border-right: 3px solid transparent; background-clip: padding-box; }
         .msgActions { opacity: 0; transition: opacity 0.12s; }
-        .msgBubble:hover .msgActions { opacity: 1; }
+        .msgRow:hover .msgActions, .msgRow:focus-within .msgActions { opacity: 1; }
         .msgActionBtn:hover, .mdCodeCopy:hover { border-color: #c0461f !important; color: #c0461f !important; }
+        .msgSaveBtn:hover { filter: brightness(1.08); }
       `}</style>
       <Sidebar agents={state.agents} runtimes={runtimesRef.current}
         view={state.view}
@@ -6861,6 +6931,12 @@ const styles = {
   mdCodePre:      { background: c.ink, color: "#e8e0cf", padding: "10px 12px", fontFamily: fonts.mono, fontSize: 11.5, lineHeight: 1.55, whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, overflow: "auto" },
   msgActions:     { display: "flex", gap: 6, marginTop: 8 },
   msgActionBtn:   { fontFamily: fonts.mono, fontSize: 9.5, color: "#8a7c63", background: "transparent", border: `1px solid ${c.line}`, borderRadius: 6, padding: "3px 9px", cursor: "pointer", letterSpacing: "0.04em", transition: "0.12s" },
+  // Edit & resend (user messages)
+  msgUserCol:     { display: "flex", flexDirection: "column", alignItems: "flex-end", maxWidth: "70%" },
+  msgEditCol:     { display: "flex", flexDirection: "column", width: "70%" },
+  msgEditArea:    { width: "100%", boxSizing: "border-box", fontFamily: fonts.body, fontSize: 13.5, lineHeight: 1.6, color: c.ink, background: c.paper2, border: `1px solid ${c.rust}`, borderRadius: 12, padding: "10px 14px", resize: "vertical" },
+  msgEditBtns:    { display: "flex", gap: 6, justifyContent: "flex-end", marginTop: 6 },
+  msgEditSave:    { color: c.paper, background: c.rust, borderColor: c.rust },
   typing:         { display: "flex", gap: 5, padding: "6px 0", alignItems: "center" },
   typingDot:      { width: 7, height: 7, borderRadius: "50%", background: "#8a7c63", display: "inline-block", animation: "blink 1.2s infinite both" },
   toolStatusInline: { fontFamily: fonts.mono, fontSize: 11, color: c.rust, display: "flex", alignItems: "center", gap: 6, padding: "4px 0" },
