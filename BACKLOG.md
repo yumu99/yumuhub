@@ -20,7 +20,7 @@ Items parked during active development. Ranked by implementation effort (lines o
 ## Large (400–800 lines)
 
 - **MCP Server Mode (transport adapter)** — Expose tool registry over stdio/SSE MCP protocol. Map existing tools to MCP definitions. ~400–600 lines. The reverse of the shipped client — lets *other* MCP clients use yumuHub's tools.
-- ✅ **DONE — MCP client** — Connect to external MCP servers (stdio) as tool providers; discovered tools register as `mcp__<id>__<tool>` and are grantable per agent. Settings → MCP servers. This is the RAG / knowledge-base on-ramp (point it at any MCP RAG server). Rust: `mcp_start`/`mcp_call_tool`/`mcp_stop` in main.rs; JS client ~L2609. Remaining: remote/SSE transport, exit-cleanup of child procs.
+- ✅ **DONE — MCP client** — Connect to external MCP servers (stdio) as tool providers; discovered tools register as `mcp__<id>__<tool>` and are grantable per agent. Settings → MCP servers. This is the RAG / knowledge-base on-ramp (point it at any MCP RAG server). Rust: `mcp_start`/`mcp_call_tool`/`mcp_stop` in main.rs; JS client ~L2609. Hardened: process-group reap-on-quit (no orphans), stderr capture, 100 KB output cap. Remaining: remote/SSE transport, one-click preset servers, MCP-specific approval gating.
 
 ## Very Large (800+ lines)
 

@@ -6,9 +6,10 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use serde_json::{json, Value};
+use tauri::Manager;
 
 fn workspace_root() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
@@ -762,6 +763,18 @@ fn redact_secrets(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
+        // Copy whole UTF-8 codepoints, never raw bytes. Slicing the string on a
+        // byte index that lands mid-codepoint panics — and a panic crossing the
+        // command FFI boundary aborts the entire app. (This bites on ANY
+        // non-ASCII content: emoji, accents, the `…` we emit ourselves, etc.)
+        // Secret patterns are all ASCII, so they only start on a char boundary.
+        if !s.is_char_boundary(i) {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && !s.is_char_boundary(i) { i += 1; }
+            out.push_str(&s[start..i]);
+            continue;
+        }
         // Try to match a secret-looking token starting at i.
         let rest = &s[i..];
         let matched: Option<usize> = if rest.starts_with("sk-") || rest.starts_with("sk_") {
@@ -781,15 +794,18 @@ fn redact_secrets(s: &str) -> String {
         };
         if let Some(len) = matched {
             if len >= 12 {
-                let head = &s[i..i + 6.min(len)];
-                out.push_str(head);
+                // Token chars are ASCII, so i + 6.min(len) is a char boundary.
+                out.push_str(&s[i..i + 6.min(len)]);
                 out.push_str("…[REDACTED]");
                 i += len;
                 continue;
             }
         }
-        out.push(bytes[i] as char);
+        // No secret here — copy exactly one codepoint and advance past it.
+        let start = i;
         i += 1;
+        while i < bytes.len() && !s.is_char_boundary(i) { i += 1; }
+        out.push_str(&s[start..i]);
     }
     out
 }
@@ -835,7 +851,11 @@ fn debug_log(line: String) -> Result<(), String> {
         .filter(|c| !c.is_control() || *c == ' ')
         .collect();
     let truncated = if clean.len() > DEBUG_LOG_LINE_CAP {
-        format!("{}…[truncated {} bytes]", &clean[..DEBUG_LOG_LINE_CAP], clean.len() - DEBUG_LOG_LINE_CAP)
+        // Back off to a UTF-8 char boundary — slicing mid-codepoint panics, and
+        // a panic crossing the command FFI boundary aborts the whole app.
+        let mut end = DEBUG_LOG_LINE_CAP;
+        while end > 0 && !clean.is_char_boundary(end) { end -= 1; }
+        format!("{}…[truncated {} bytes]", &clean[..end], clean.len() - end)
     } else {
         clean
     };
@@ -856,10 +876,48 @@ struct McpServer {
     stdin: ChildStdin,
     rx: Receiver<Value>,
     next_id: u64,
+    // Last few KB the server wrote to stderr — surfaced in error messages so a
+    // misconfigured server says *why* it failed instead of just timing out.
+    stderr_tail: Arc<Mutex<String>>,
 }
 
 #[derive(Default)]
 struct McpManager(Mutex<HashMap<String, McpServer>>);
+
+// Terminate an MCP child and its whole process tree. On unix the child is its
+// own process-group leader (set via process_group(0) at spawn), so signalling
+// the negative pid reaps grandchildren too (e.g. npx → node) — killing only the
+// recorded PID would orphan them. SIGKILL on the leader is the fallback.
+fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let pid = child.id();
+        let _ = Command::new("/bin/kill").arg("-TERM").arg(format!("-{}", pid)).status();
+    }
+    let _ = child.kill();
+}
+
+// Reap every running MCP server's process tree (called on app quit).
+fn reap_all(manager: &McpManager) {
+    if let Ok(mut map) = manager.0.lock() {
+        for server in map.values_mut() {
+            kill_tree(&mut server.child);
+        }
+        map.clear();
+    }
+}
+
+// Trailing chars of a server's captured stderr, for diagnostics.
+fn stderr_snippet(tail: &Arc<Mutex<String>>) -> String {
+    let s = tail.lock().map(|g| g.trim().to_string()).unwrap_or_default();
+    if s.len() > 500 {
+        let mut start = s.len() - 500;
+        while !s.is_char_boundary(start) { start += 1; }
+        format!("…{}", &s[start..])
+    } else {
+        s
+    }
+}
 
 impl McpServer {
     // Write one newline-delimited JSON-RPC message to the server's stdin.
@@ -922,15 +980,15 @@ fn mcp_start(
     // Replace any existing server registered under this id.
     if let Ok(mut map) = manager.0.lock() {
         if let Some(mut old) = map.remove(&id) {
-            let _ = old.child.kill();
+            kill_tree(&mut old.child);
         }
     }
     // Spawn through a login shell so npx/node/python on the user's PATH resolve
     // (a macOS GUI app doesn't inherit the terminal's PATH). `exec "$0" "$@"`
     // replaces the shell with the server process (clean signals + pipes) and
     // passes args positionally — no manual quoting, no injection.
-    let mut child = Command::new("/bin/zsh")
-        .arg("-l")
+    let mut cmd = Command::new("/bin/zsh");
+    cmd.arg("-l")
         .arg("-c")
         .arg(r#"exec "$0" "$@""#)
         .arg(&command)
@@ -938,12 +996,21 @@ fn mcp_start(
         .envs(&env)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped());
+    // Put the server in its own process group so kill_tree can reap the whole
+    // tree (npx → node etc.) on stop / app quit instead of orphaning it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd
         .spawn()
         .map_err(|e| format!("spawn MCP server '{}': {}", command, e))?;
 
     let stdin = child.stdin.take().ok_or("no stdin pipe on MCP server")?;
     let stdout = child.stdout.take().ok_or("no stdout pipe on MCP server")?;
+    let stderr = child.stderr.take();
 
     // Reader thread: drain stdout line-by-line, forward parsed JSON to the
     // channel. Draining continuously also prevents the child from blocking on a
@@ -969,7 +1036,33 @@ fn mcp_start(
         }
     });
 
-    let mut server = McpServer { child, stdin, rx, next_id: 0 };
+    // Drain stderr into a capped tail so a failing server's diagnostics survive
+    // (and don't deadlock the child on a full stderr pipe).
+    let stderr_tail = Arc::new(Mutex::new(String::new()));
+    if let Some(se) = stderr {
+        let buf = Arc::clone(&stderr_tail);
+        std::thread::spawn(move || {
+            let reader = BufReader::new(se);
+            for line in reader.lines() {
+                match line {
+                    Ok(l) => {
+                        if let Ok(mut g) = buf.lock() {
+                            g.push_str(&l);
+                            g.push('\n');
+                            if g.len() > 4096 {
+                                let mut cut = g.len() - 4096;
+                                while !g.is_char_boundary(cut) { cut += 1; }
+                                *g = g[cut..].to_string();
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    let mut server = McpServer { child, stdin, rx, next_id: 0, stderr_tail };
 
     // Handshake: initialize → initialized notification → tools/list.
     if let Err(e) = server.request(
@@ -981,15 +1074,25 @@ fn mcp_start(
         }),
         15000,
     ) {
-        let _ = server.child.kill();
-        return Err(format!("initialize failed: {} (check the command and args)", e));
+        let se = stderr_snippet(&server.stderr_tail);
+        kill_tree(&mut server.child);
+        return Err(format!(
+            "initialize failed: {} (check the command and args){}",
+            e,
+            if se.is_empty() { String::new() } else { format!(" — server stderr: {}", se) }
+        ));
     }
     let _ = server.notify("notifications/initialized", json!({}));
     let tools = match server.request("tools/list", json!({}), 15000) {
         Ok(r) => r,
         Err(e) => {
-            let _ = server.child.kill();
-            return Err(format!("tools/list failed: {}", e));
+            let se = stderr_snippet(&server.stderr_tail);
+            kill_tree(&mut server.child);
+            return Err(format!(
+                "tools/list failed: {}{}",
+                e,
+                if se.is_empty() { String::new() } else { format!(" — server stderr: {}", se) }
+            ));
         }
     };
 
@@ -1012,16 +1115,27 @@ fn mcp_call_tool(
         .get_mut(&id)
         .ok_or_else(|| format!("MCP server '{}' is not running", id))?;
     let result = server.request("tools/call", json!({"name": name, "arguments": args}), 120000)?;
-    serde_json::to_string(&result).map_err(|e| format!("encode result: {}", e))
+    let s = serde_json::to_string(&result).map_err(|e| format!("encode result: {}", e))?;
+    // Cap the payload fed back through IPC into the LLM context. A truncated
+    // string is no longer valid JSON, so the JS side falls back to using it raw
+    // (which is fine — the marker tells the model it was cut).
+    const CAP: usize = 100_000;
+    if s.len() > CAP {
+        let mut end = CAP;
+        while !s.is_char_boundary(end) { end -= 1; }
+        Ok(format!("{}…[truncated {} bytes of MCP result]", &s[..end], s.len() - end))
+    } else {
+        Ok(s)
+    }
 }
 
-// Stop a running MCP server and kill its child process.
+// Stop a running MCP server and reap its process tree.
 #[tauri::command]
 fn mcp_stop(manager: tauri::State<'_, McpManager>, id: String) -> Result<String, String> {
     let mut map = manager.0.lock().map_err(|_| "MCP state poisoned".to_string())?;
     match map.remove(&id) {
         Some(mut s) => {
-            let _ = s.child.kill();
+            kill_tree(&mut s.child);
             Ok(format!("Stopped MCP server '{}'", id))
         }
         None => Ok(format!("MCP server '{}' was not running", id)),
@@ -1060,6 +1174,27 @@ fn main() {
             mcp_call_tool,
             mcp_stop,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Reap MCP child process trees when the app quits, so external
+            // servers don't orphan. (Force-kill of the app can't be caught;
+            // well-behaved servers also self-exit when their stdin closes.)
+            // macOS fires different run-loop events depending on how the app is
+            // quit, so we cover the exit-ish ones; reap_all is idempotent.
+            // macOS fires RunEvent::Exit on app quit (not ExitRequested); a
+            // window close can fire WindowEvent. Cover them all — reap_all is
+            // idempotent (it clears the map after the first reap).
+            match &event {
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                    reap_all(&app_handle.state::<McpManager>());
+                }
+                tauri::RunEvent::WindowEvent { event: win, .. } => {
+                    if matches!(win, tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed) {
+                        reap_all(&app_handle.state::<McpManager>());
+                    }
+                }
+                _ => {}
+            }
+        });
 }
