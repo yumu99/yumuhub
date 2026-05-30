@@ -6,9 +6,9 @@ A Tauri v2 desktop app (macOS) — a chat-native multi-agent hub that orchestrat
 
 ## Architecture
 
-**Single-file frontend.** The entire React app lives in `src/YumuHub.jsx` (~6900 LOC). There is no TypeScript, no component library, no CSS framework, no router. Inline styles via a `styles` object at the end of the file. Color palette in `c`, fonts in `fonts`.
+**Single-file frontend.** The entire React app lives in `src/YumuHub.jsx` (~7,800 LOC). There is no TypeScript, no component library, no CSS framework, no router. Inline styles via a `styles` object at the end of the file. Color palette in `c`, fonts in `fonts`.
 
-**Rust backend.** `src-tauri/src/main.rs` (~850 LOC) handles filesystem, sandbox, IPC (inbox/outbox), debug logging, search proxies, CCR lifecycle, and the `zai_anthropic_proxy`.
+**Rust backend.** `src-tauri/src/main.rs` (~1,200 LOC) handles filesystem, sandbox, IPC (inbox/outbox), debug logging, search proxies, CCR lifecycle, the `zai_anthropic_proxy`, and the **MCP client** subsystem (the first long-lived subprocess supervisor: `McpManager` = `Mutex<HashMap>` via `.manage()`, each server spawned in its own process group, per-server reader thread + `mpsc` channel, reaped on quit via `RunEvent::Exit`). Only added Cargo dep: `serde_json`.
 
 **No tests.** Verification is done by building the app, launching it, and exercising features via the UI or the inbox/outbox protocol.
 
@@ -39,11 +39,12 @@ grep -nE '^(class |function |const [A-Z][a-zA-Z]* = |// ─)' src/YumuHub.jsx
 ## Key architectural facts
 
 - **All state is in localStorage.** Persistence keys prefixed `yumuhub:`. Chat messages stored per-chat. Optional disk mirror via `chatBackup` (idle-flush to `~/yumuhub-workspace/chats/`).
-- **Universal system prompt** lives at `~/yumuHub.md` (not in the repo). Loaded at launch, editable in Settings.
+- **Universal system prompt** lives at `~/yumuhub-workspace/yumuHub.md` (not in the repo). Loaded at launch, editable in Settings. Currently a Workflows→Agents→Tools playbook with a `§5 PERSONALIZE` block.
 - **Provider adapters** are in a `providers` object (~L1582–L1776). Each has `models`, `send(history, config, signal)`, and optional `noKeyRequired`.
 - **z.ai anthropic endpoint** routes through a Rust curl proxy (`zai_anthropic_proxy`) because WebKit can't reach `api.z.ai/api/anthropic` directly. Non-streaming — response lands all at once.
-- **Tool registration** happens in `registerBuiltinTools()` (~L772–L1427). Tools are `{ name, description, parameters, execute, category, harnessOnly? }`.
+- **Tool registration** happens in `registerBuiltinTools()` (~L900-ish; grep to confirm). Tools are `{ name, description, inputSchema, handler, category, harnessOnly? }` — the schema is JSON-Schema; the JS adapters convert it to each provider's expected shape. MCP tools register the same way (`mcp__<id>__<tool>` under category `mcp:<id>`) — categories are derived dynamically, so they appear in the agent editor + Tools view with no extra wiring.
 - **AgentRuntime** is multi-tenant: one runtime per agent config, with per-chat histories, abort controllers, and status tracking.
+- **debug_log gotcha** — anything routed through `debug_log` / `redact_secrets` (Rust) MUST be sliced on char boundaries. Both used to byte-slice a `String`, so any non-ASCII (emoji, accents, `…`) sliced mid-codepoint → panic across the FFI boundary → whole-app SIGABRT. Fixed; keep it that way when editing those paths.
 
 ## Editing guidelines
 

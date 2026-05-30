@@ -6,9 +6,9 @@ A line-range index of the source. **Re-read this file (not the whole source) whe
 
 ---
 
-## `src/YumuHub.jsx` (~7,100 lines)
+## `src/YumuHub.jsx` (~7,800 lines)
 
-> **Line-number drift notice:** the per-section ranges below predate several feature sprints and now run ~800 lines low in the later sections (e.g. `ChatView` is actually ~L3452, not L2655). Treat every range as approximate and `grep` the symbol name to confirm. Symbols added in the most recent UX sprint are listed accurately under **"Recent UI additions"** below.
+> **Line-number drift notice:** the per-section ranges below predate several feature sprints and now run ~1,500 lines low in the later sections (e.g. `ChatView` is actually ~L3550, not L2655). Treat every range as approximate and `grep` the symbol name to confirm. Symbols added in the recent UX + MCP sprints are listed accurately under **"Recent UI additions"** below.
 
 ### Imports & build-time source embed — **L1–L9**
 - L1 React imports
@@ -178,12 +178,14 @@ z.ai helpers (L1235–L1259): `resolveZaiKey(ctx, keyHandle)`, `formatZaiError(s
 
 | Symbol | Line | What it is |
 |---|---|---|
-| `fmtTok(n)` | L3276 | Compact token count formatter (e.g. `12.4k`). |
-| `contextWindowFor(provider, model)` | L3285 | Context-window size lookup for the header meter. |
-| `fmtMsgTime(ts)` | L3295 | Per-message timestamp formatter (time today, else `Mon D, time`). |
-| `ChatView` | L3452 | (was listed above at the stale L2655) — now also hosts the **◔ context meter** (header), **`fork(idx)`** (L3745, branch a new chat from a message), **`retry()`** (L3763, replay last user msg from the error banner), and per-message **timestamps**. |
-| `CommandPalette` | L7174 | ⌘K palette: fuzzy-search chats/agents/actions + nav, arrow-key navigation, `onOpenPalette` opens it. |
-| `sidebarKbdHint` (style) | L7484 | The `⌘K` badge shown in the empty sidebar search; click opens the palette. |
+| `fmtTok(n)` | L3374 | Compact token count formatter (e.g. `12.4k`). |
+| `contextWindowFor(provider, model)` | L3383 | Context-window size lookup for the header meter. |
+| `fmtMsgTime(ts)` | L3393 | Per-message timestamp formatter (time today, else `Mon D, time`). |
+| `ChatView` | L3550 | (was listed above at the stale L2655) — now also hosts the **◔ context meter** (header), **`fork(idx)`** (L3843, branch a new chat from a message), **`retry()`** (L3861, replay last user msg from the error banner), and per-message **timestamps**. |
+| `MCP_PRESETS` | L6488 | Template list for one-click MCP server adds (Everything / Memory / Sequential-Thinking / Filesystem). |
+| `McpServersSection` | L6500 | Settings panel for MCP servers — preset buttons, id/label/command/args/env editors, Start/Stop, auto-start. |
+| `CommandPalette` | L7393 | ⌘K palette: fuzzy-search chats/agents/actions + nav, arrow-key navigation, `onOpenPalette` opens it. |
+| `sidebarKbdHint` (style) | L7703 | The `⌘K` badge shown in the empty sidebar search; click opens the palette. |
 
 **App-level keyboard wiring** (in `YumuHub`, see Root component below): `kbdRef` (useRef, refreshed each render just before `return`) + the global keydown effect (~L6769) own **⌘K** (palette toggle), **⌘N** (new chat), **Esc** (close palette / abort active generation). `onOpenPalette` is threaded App → `Sidebar` → `SidebarChatSection`.
 
@@ -231,9 +233,9 @@ Persistence: `DEFAULT_SETTINGS.mcpServers = { servers: [{ _uid, id, label, comma
 
 ---
 
-## `src-tauri/src/main.rs` (~1,030 lines)
+## `src-tauri/src/main.rs` (~1,200 lines)
 
-> Line numbers in this table predate the MCP subsystem and are approximate — grep to confirm. The MCP client (~L847–end) is documented at the bottom of the table.
+> Line numbers in this table predate the MCP subsystem and are approximate — grep to confirm. The MCP client (~L867–end) is documented at the bottom of the table.
 
 | Region | Range | Notes |
 |---|---|---|
@@ -271,7 +273,7 @@ Persistence: `DEFAULT_SETTINGS.mcpServers = { servers: [{ _uid, id, label, comma
 | `chat_backup_read` | L426–L433 | Reads chat JSON from disk |
 | `chat_backup_list` | L434–L448 | Lists all backed-up chat IDs |
 | `debug_log` + `redact_secrets` | L449–L464 / ~L761 | Appends a timestamped, secret-redacted, length-capped line. **Both must slice strings on char boundaries** — they scan by byte index, and a mid-codepoint slice panics → SIGABRT across the FFI boundary (this bit on any non-ASCII log line; fixed). |
-| **MCP client** (`struct McpServer` / `McpManager`, `kill_tree` / `reap_all` / `stderr_snippet`, `mcp_start` / `mcp_call_tool` / `mcp_stop`) | ~L847–L1030 | First long-lived subprocess subsystem. `McpManager` = `Mutex<HashMap<id, McpServer>>` via `.manage()`. Each child spawned through `zsh -l -c 'exec "$0" "$@"'` (login PATH, clean args) **in its own process group** (`process_group(0)`), with reader+stderr drain threads → stdout `mpsc` channel + 4 KB stderr tail. `McpServer::request` writes newline-delimited JSON-RPC, matches by id with a fixed deadline. `mcp_start` runs initialize → `notifications/initialized` → `tools/list`; failures include the captured stderr. `mcp_call_tool` caps output at 100 KB. **Reap-on-quit:** the `.build().run(\|app,event\|…)` closure calls `reap_all` (→ `kill_tree`: SIGTERM the process group) on `RunEvent::Exit` (macOS quit event — NOT `ExitRequested`), `ExitRequested`, and window close/destroy. Uses `serde_json` (the one added dep). |
+| **MCP client** (`struct McpServer` / `McpManager`, `kill_tree` / `reap_all` / `stderr_snippet`, `mcp_start` / `mcp_call_tool` / `mcp_stop`) | ~L867–L1145 | First long-lived subprocess subsystem. `McpManager` = `Mutex<HashMap<id, McpServer>>` via `.manage()`. Each child spawned through `zsh -l -c 'exec "$0" "$@"'` (login PATH, clean args) **in its own process group** (`process_group(0)`), with reader+stderr drain threads → stdout `mpsc` channel + 4 KB stderr tail. `McpServer::request` writes newline-delimited JSON-RPC, matches by id with a fixed deadline. `mcp_start` runs initialize → `notifications/initialized` → `tools/list`; failures include the captured stderr. `mcp_call_tool` caps output at 100 KB. **Reap-on-quit:** the `.build().run(\|app,event\|…)` closure calls `reap_all` (→ `kill_tree`: SIGTERM the process group) on `RunEvent::Exit` (macOS quit event — NOT `ExitRequested`), `ExitRequested`, and window close/destroy. Uses `serde_json` (the one added dep). |
 | `main` / handlers | ~L1027–end | `invoke_handler!` list — **add new commands here**. `.manage(McpManager::default())` registers MCP state. |
 
 ---

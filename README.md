@@ -14,7 +14,7 @@ yumuHub is a personal, single-user desktop app that talks to any AI provider —
 - **🔀 Multi-provider** — switch between Anthropic, OpenAI, z.ai, Claude Code Router, or a built-in Mock provider per agent. No vendor lock-in.
 - **🧬 Agents that build teams** — agents can `spawn_agent` to create specialists on the fly, `delegate` via `send_to_agent`, and `configure_agent` to retool one another, all without leaving the chat.
 - **🚌 Real message bus** — inter-agent messaging through a pub/sub bus with addressed routing, so delegation runs concurrently in the background.
-- **🛠️ 20 built-in tools** — web search, calculators, file reading, image/video/audio generation (z.ai), and self-editing — grouped into categories you grant per agent.
+- **🛠️ 23 built-in tools across 11 categories** — web search, calculators, file reading, image/video/audio generation (z.ai), and self-editing — grouped into categories you grant per agent.
 - **🔌 MCP client** — connect external [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio); their tools auto-register and can be granted to any agent like a built-in. Your bridge to RAG, integrations, and a growing plugin ecosystem.
 - **🧠 Two genuinely novel reasoning tools** — `truth_only` (re-answers with social_context=0, politeness=0) and `adhd_reason` (surfaces tangentially-related angles). You won't find these anywhere else.
 - **🔒 Self-editing sandbox** — agents can read and rewrite yumuHub's *own* source code in a jailed beta copy, never touching the running app.
