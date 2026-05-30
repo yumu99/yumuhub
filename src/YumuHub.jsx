@@ -6482,6 +6482,16 @@ function EvalHarnessSection({ agents, runtimes, onChange }) {
   );
 }
 
+// One-click templates for well-known MCP servers (all run via `npx -y`, which
+// auto-installs on first use — no global install needed). Adding a preset just
+// pre-fills a server row; the user reviews it and clicks Start.
+const MCP_PRESETS = [
+  { id: "everything", label: "Everything (test)", command: "npx", argsText: "-y\n@modelcontextprotocol/server-everything", hint: "Reference server with sample tools — handy for a first connection." },
+  { id: "memory", label: "Memory", command: "npx", argsText: "-y\n@modelcontextprotocol/server-memory", hint: "Persistent knowledge-graph memory." },
+  { id: "thinking", label: "Sequential Thinking", command: "npx", argsText: "-y\n@modelcontextprotocol/server-sequential-thinking", hint: "Structured step-by-step reasoning tool." },
+  { id: "filesystem", label: "Filesystem", command: "npx", argsText: "-y\n@modelcontextprotocol/server-filesystem\n/CHANGE/ME", hint: "Add the absolute path(s) to expose as final argument(s) before Start." },
+];
+
 // ─── MCP servers: connect external Model Context Protocol tool servers ───
 // Each row spawns a stdio MCP server (via the Rust side), runs the handshake,
 // and registers its tools as `mcp__<id>__<tool>`. Start/Stop is live control;
@@ -6506,6 +6516,10 @@ function McpServersSection({ onChange }) {
   };
   const addServer = () => {
     setCfg({ servers: [...servers, { _uid: newId("mcp"), id: uniqueSlug("server"), label: "", command: "", argsText: "", envText: "", enabled: false }] });
+    setOpen(true);
+  };
+  const addPreset = (p) => {
+    setCfg({ servers: [...servers, { _uid: newId("mcp"), id: uniqueSlug(p.id), label: p.label, command: p.command, argsText: p.argsText, envText: "", enabled: false }] });
     setOpen(true);
   };
   const removeServer = async (s) => { await stopMcpServer(s.id); setCfg({ servers: servers.filter(x => x._uid !== s._uid) }); };
@@ -6535,7 +6549,13 @@ function McpServersSection({ onChange }) {
       {open && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={styles.vaultInfo}>
-            Connect external <strong>Model Context Protocol</strong> servers (stdio transport). Discovered tools register as <code style={styles.code}>mcp__&lt;id&gt;__&lt;tool&gt;</code> and can be granted to any agent in the Agents tab, just like built-in tools. Example — command <code style={styles.code}>npx</code>, args (one per line): <code style={styles.code}>-y</code>, <code style={styles.code}>@modelcontextprotocol/server-filesystem</code>, <code style={styles.code}>~/Documents</code>.
+            Connect external <strong>Model Context Protocol</strong> servers (stdio transport). Discovered tools register as <code style={styles.code}>mcp__&lt;id&gt;__&lt;tool&gt;</code> and can be granted to any agent in the Agents tab, just like built-in tools. Add a preset below or a custom server, then <strong>Start</strong>.
+          </div>
+          <div style={{ display: "flex", gap: 6, padding: "0 16px", flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: "#8a7c63", fontFamily: fonts.mono }}>presets:</span>
+            {MCP_PRESETS.map(p => (
+              <button key={p.id} onClick={() => addPreset(p)} style={styles.toolBulkBtn} title={p.hint}>+ {p.label}</button>
+            ))}
           </div>
           {servers.map(s => {
             const st = mcpStatus[s.id] || {};
