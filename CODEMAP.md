@@ -187,6 +187,22 @@ z.ai helpers (L1235–L1259): `resolveZaiKey(ctx, keyHandle)`, `formatZaiError(s
 
 **App-level keyboard wiring** (in `YumuHub`, see Root component below): `kbdRef` (useRef, refreshed each render just before `return`) + the global keydown effect (~L6769) own **⌘K** (palette toggle), **⌘N** (new chat), **Esc** (close palette / abort active generation). `onOpenPalette` is threaded App → `Sidebar` → `SidebarChatSection`.
 
+### MCP client adapter (external Model Context Protocol tool servers)
+
+yumuHub is an **MCP client**: it spawns external MCP servers as stdio subprocesses (Rust side) and registers their tools into the same `pluginHost` as built-ins. Because tool categories are derived dynamically, MCP tools appear in the Agent editor + Tools view with no extra UI wiring, and their `inputSchema` flows unchanged to every provider.
+
+| Symbol | Line | What it is |
+|---|---|---|
+| `PluginHost.unregister` / `unregisterByPrefix` | L853–L854 | Drop a tool, or all tools under a prefix (used to clear an MCP server's tools on restart/stop). |
+| `// ─── MCP client ───` block | L2609–L2693 | All JS-side MCP plumbing. |
+| `formatMcpResult(raw)` | L2623 | Parse the JSON-RPC `result` string from Rust → plain text; throws on `isError`. |
+| `registerMcpTools(serverId, tools)` | L2640 | Register discovered tools as `mcp__<id>__<tool>` (category `mcp:<id>`); handler routes to `mcp_call_tool`. |
+| `startMcpServer(server)` / `stopMcpServer(id)` | L2662 / L2677 | Spawn+handshake+register / kill+unregister. `mcpStatus` (L2620) holds per-server `{running, toolCount, error}`. |
+| `startEnabledMcpServers()` | L2685 | Launch hook — starts every server with `enabled:true`. Called from an App `useEffect`. |
+| `McpServersSection` | L6490 | Settings UI: per-server id/label/command/args/env, Start/Stop, auto-start checkbox. Modeled on `EvalHarnessSection`. |
+
+Persistence: `DEFAULT_SETTINGS.mcpServers = { servers: [{ _uid, id, label, command, argsText, envText, enabled }] }` (in `NESTED_SETTING_KEYS`). Rust side: see `mcp_start` / `mcp_call_tool` / `mcp_stop` in main.rs.
+
 ### Root component (`YumuHub`) — **L5638–L5987**
 - `useReducer` initial state + migration
 - Wires `pluginHost` callbacks (spawn / remove / update)
@@ -215,7 +231,9 @@ z.ai helpers (L1235–L1259): `resolveZaiKey(ctx, keyHandle)`, `formatZaiError(s
 
 ---
 
-## `src-tauri/src/main.rs` (~493 lines)
+## `src-tauri/src/main.rs` (~1,030 lines)
+
+> Line numbers in this table predate the MCP subsystem and are approximate — grep to confirm. The MCP client (~L847–end) is documented at the bottom of the table.
 
 | Region | Range | Notes |
 |---|---|---|
@@ -253,7 +271,8 @@ z.ai helpers (L1235–L1259): `resolveZaiKey(ctx, keyHandle)`, `formatZaiError(s
 | `chat_backup_read` | L426–L433 | Reads chat JSON from disk |
 | `chat_backup_list` | L434–L448 | Lists all backed-up chat IDs |
 | `debug_log` | L449–L464 | Appends timestamped line to debug log |
-| `main` / handlers | L466–L493 | `invoke_handler!` list — **add new commands here** |
+| **MCP client** (`struct McpServer` / `McpManager`, `mcp_start` / `mcp_call_tool` / `mcp_stop`) | ~L847–L1024 | First long-lived subprocess subsystem. `McpManager` = `Mutex<HashMap<id, McpServer>>` registered via `.manage()`. Each server: child spawned through `zsh -l -c 'exec "$0" "$@"'` (login PATH, clean args) with a reader thread draining stdout → `mpsc` channel; `McpServer::request` writes newline-delimited JSON-RPC and matches the response by id with a fixed deadline. `mcp_start` runs initialize → `notifications/initialized` → `tools/list` and returns the tools JSON. Uses `serde_json` (the one added dep). stderr → `Stdio::null()` to avoid pipe deadlock. |
+| `main` / handlers | ~L1027–end | `invoke_handler!` list — **add new commands here**. `.manage(McpManager::default())` registers MCP state. |
 
 ---
 

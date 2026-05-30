@@ -14,6 +14,11 @@
 | **Keyboard shortcuts** ⌘N (new chat) · Esc (stop generation) | `7083899` | `kbdRef` + extended global keydown effect in App |
 | **Shortcut discoverability** (⌘K badge in search; ⌘N/Esc in tooltips) | `474f59a` | `sidebarKbdHint` badge; `onOpenPalette` threaded App→Sidebar→SidebarChatSection |
 
+## Phase 2 — bigger tracks (after "go ahead on all")
+
+- **`yumuHub.md` → rev-2 playbook** (NOT in repo — lives at `~/yumuhub-workspace/yumuHub.md`; rev-1 backed up at `yumuHub.md.rev1.bak`). Full Workflows→Agents→Tools→Voice operating playbook grounded in the real 23 tools / 11 categories, with a marked **§5 PERSONALIZE** block for the user's roster. App reloads it from disk on launch.
+- **MCP client adapter** — *shipped + verified end-to-end*. yumuHub now spawns external Model Context Protocol servers (stdio) and registers their tools as `mcp__<id>__<tool>`. **Rust** (`main.rs` ~L847–end): `McpManager` = `Mutex<HashMap<id,McpServer>>` via `.manage()`; `mcp_start`/`mcp_call_tool`/`mcp_stop`; per-server reader thread + `mpsc`; spawn via `zsh -l -c 'exec "$0" "$@"'`; added `serde_json` dep. **JS** (~L2609–2693): `registerMcpTools`/`startMcpServer`/`stopMcpServer`/`startEnabledMcpServers` + `PluginHost.unregisterByPrefix`; `McpServersSection` in Settings (L6490); `mcpServers` in `DEFAULT_SETTINGS`+`NESTED_SETTING_KEYS`. Verified via `/tmp/mock_mcp.py` (a minimal stdio MCP fixture) → `add(2,40)=42`, `echo` round-trip, both through the real `pluginHost.execute` path. Direction chosen: **client** (consume external servers) over server (expose ours), since that's what "unlock RAG/integrations/plugins" needs.
+
 ## Already existed (audited, NOT gaps)
 
 Copy message (`CopyBtn`) · copy code block (`mdCodeCopy`) · scroll-to-bottom / "Jump to latest" (`stickToBottom`/`jumpToLatest`) · **content search across all chats** with snippets (`SidebarChatSection`, L~3072) · **auto-title** from first message (ChatView.send, L~3610) · whole-chat **export** MD+JSON (`exportChat`, L~3258) · **pin** to top (`onPin`) · **image paste** (multimodal, L~3541) · edit message · regenerate · stop · archive · rename. yumuHub was more complete than the brief implied.
@@ -39,16 +44,21 @@ cd ~/yumuhub-workspace/yumuhub && source ~/.cargo/env && npx tauri build && \
 
 ## Where we are right now
 
-- Working tree **clean**; HEAD = `474f59a`, all pushed to `main`.
-- App built + installed + relaunched at `/Applications/yumuHub.app`.
-- ⌘K badge + command palette verified live via screenshot.
+- App built + installed + relaunched at `/Applications/yumuHub.app` (clean production build — TEMP-VERIFY reverted, confirmed no MCP-VERIFY lines in a fresh launch).
+- Frontend now ~7,300 LOC; `main.rs` ~1,030 LOC (+`serde_json` dep, +`Cargo.lock` churn).
+- ⌘K badge + palette verified via screenshot; MCP verified via debug-log round-trip.
+
+## Standing directive from the user (IMPORTANT)
+
+At any future "what should I build next?" fork, **do NOT stop to ask** — spawn subagents to deliberate the most natural path forward, then proceed autonomously. (Stated verbatim mid-session.)
 
 ## Open items / next steps
 
-- **DEFERRED — needs USER personalization:** redesign `~/yumuhub-workspace/yumuHub.md` (the universal system prompt) into a Workflows→Agent→Tools operational playbook (like nanoclaw.md / openclaw.md). Don't do unilaterally — the agent roster/workflow style is the user's call.
-- **Architectural backlog (needs a decision, not "obvious gap"):** MCP transport adapter (~400–600 LOC, "highest leverage" per BACKLOG.md) → unlocks RAG + integrations + plugin ecosystem. Then auth/RBAC, visual workflow builder. All bigger than this sprint's scope.
-- **Possible smaller polish:** in-chat `@agent` mentions in the composer; "continue generating" when output is truncated; LLM-generated concise titles (vs. the current first-48-chars slice).
-- **CODEMAP.md drift:** header says ~6286 lines; file is now ~7,100. New symbols added this session (`CommandPalette`, `fmtTok`, `contextWindowFor`, `fmtMsgTime`, `fork`, `retry`, `sidebarKbdHint`). A full line-number re-audit is its own task — the file's header already says numbers are approximate (grep to confirm).
+- **MCP follow-ups:** orphaned server processes on abnormal app exit (well-behaved servers self-exit on stdin EOF; we don't kill children on quit — would need a Tauri exit hook). No remote/SSE transport (stdio only). No per-tool approval gating specific to MCP. Consider a couple of one-click preset servers (filesystem / fetch) in `McpServersSection`.
+- **`yumuHub.md` §5:** still has placeholder PERSONALIZE bullets — the user may want to fill in their real roster/house-style.
+- **Possible smaller polish:** in-chat `@agent` mentions in the composer; "continue generating" on truncated output (needs `stop_reason` plumbed through the SSE parsers — not currently captured); LLM-generated concise titles (vs. the current first-48-chars slice).
+- **Architectural backlog:** auth/RBAC, visual workflow builder (per BACKLOG.md). RAG is now reachable via MCP servers.
+- **CODEMAP.md drift:** ranges predate recent sprints (JS ~7,300 LOC, Rust ~1,030). The file has a drift notice + accurate "Recent UI additions" and MCP blocks; a full re-audit is its own task.
 
 ## Reference
 

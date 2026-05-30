@@ -15,6 +15,7 @@ yumuHub is a personal, single-user desktop app that talks to any AI provider —
 - **🧬 Agents that build teams** — agents can `spawn_agent` to create specialists on the fly, `delegate` via `send_to_agent`, and `configure_agent` to retool one another, all without leaving the chat.
 - **🚌 Real message bus** — inter-agent messaging through a pub/sub bus with addressed routing, so delegation runs concurrently in the background.
 - **🛠️ 20 built-in tools** — web search, calculators, file reading, image/video/audio generation (z.ai), and self-editing — grouped into categories you grant per agent.
+- **🔌 MCP client** — connect external [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio); their tools auto-register and can be granted to any agent like a built-in. Your bridge to RAG, integrations, and a growing plugin ecosystem.
 - **🧠 Two genuinely novel reasoning tools** — `truth_only` (re-answers with social_context=0, politeness=0) and `adhd_reason` (surfaces tangentially-related angles). You won't find these anywhere else.
 - **🔒 Self-editing sandbox** — agents can read and rewrite yumuHub's *own* source code in a jailed beta copy, never touching the running app.
 - **📋 Persistent action log** — every tool call, delegation, and spawn is recorded chronologically so you can see exactly what your agents did.
@@ -102,7 +103,9 @@ docs/                     ← design spec + screenshot
 
 **In scope:** multi-agent chat · independent runtimes · inter-agent messaging · per-agent keys · provider switching · plugin tools · cross-device sync · local memory.
 
-**Highest-leverage next step:** an MCP transport adapter — exposing the tool registry over the Model Context Protocol to unlock RAG, integrations, and a plugin ecosystem.
+**Shipped:** **MCP client** — yumuHub connects to external [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio transport), discovers their tools, and registers them as `mcp__<server>__<tool>` so any agent can be granted them like a built-in. This is the integration/RAG/plugin on-ramp. Configure servers in **Settings → MCP servers**.
+
+**Next steps:** the reverse direction — exposing yumuHub's *own* tool registry as an MCP server for other clients · remote (HTTP/SSE) MCP transport · one-click preset servers.
 
 **Out of scope (for now):** multi-user / team accounts · fully autonomous open-ended swarms · model fine-tuning · marketplace billing.
 

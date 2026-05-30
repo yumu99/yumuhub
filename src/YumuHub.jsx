@@ -170,6 +170,15 @@ const DEFAULT_SETTINGS = {
     suites: {},
     lastResults: {},  // suiteId → { ts, perCase: [{prompt, got, pass, latency}] }
   },
+  mcpServers: {
+    // External Model Context Protocol servers (stdio transport). Each:
+    //   { id, label, command, args: [], env: {}, enabled }
+    // On launch + on Start, yumuHub spawns the process via the Rust side,
+    // runs the MCP handshake, and registers its tools as `mcp__<id>__<tool>`
+    // under category `mcp:<id>` — so any agent can be granted them like any
+    // other tool. See registerMcpTools / McpServersSection.
+    servers: [],
+  },
   dismissedNotices: [],  // Notice IDs the user dismissed via "never show again"
   // z.ai chat endpoint preset. Per z.ai docs there are three options:
   //   "anthropic" → https://api.z.ai/api/anthropic/v1/messages
@@ -193,7 +202,7 @@ const DEFAULT_SETTINGS = {
     vaultOverloaded: "#c0461f",  // 4+ agents (never)
   },
 };
-const NESTED_SETTING_KEYS = ["colors", "protection", "contentFilter", "toolApprovals", "diskPersistence", "evalHarness"];
+const NESTED_SETTING_KEYS = ["colors", "protection", "contentFilter", "toolApprovals", "diskPersistence", "evalHarness", "mcpServers"];
 function mergeNested(base, layer) {
   const out = { ...base, ...layer };
   for (const k of NESTED_SETTING_KEYS) {
@@ -839,6 +848,10 @@ class PluginHost {
   setUpdateCallback(fn)     { this._onUpdateAgent = fn; }
   setAgentListProvider(fn)  { this._getAgents = fn; }
   register(tool)            { this.tools[tool.name] = tool; }
+  unregister(name)          { delete this.tools[name]; }
+  // Drop every tool whose name starts with `prefix` (used to clear an MCP
+  // server's tools before re-registering, or when it's stopped). Returns count.
+  unregisterByPrefix(prefix){ let n = 0; for (const k of Object.keys(this.tools)) { if (k.startsWith(prefix)) { delete this.tools[k]; n++; } } return n; }
   get(name)                 { return this.tools[name] || null; }
   list()                    { return Object.values(this.tools); }
   getForAgent(agent)        { return (agent.tools || []).map(n => this.tools[n]).filter(Boolean); }
@@ -2592,6 +2605,91 @@ const pluginHost = new PluginHost();
 const registry   = new ChatRegistry(bus);
 const actionLog = new ActionLog();
 registerBuiltinTools(pluginHost);
+
+// ─── MCP (Model Context Protocol) client ───
+// Tools exposed by external MCP servers are registered into the same
+// pluginHost as built-in tools, named `mcp__<serverId>__<toolName>` under
+// category `mcp:<serverId>`. Because tool categories are derived dynamically,
+// they appear in the Agent editor and Tools view with no extra UI wiring, and
+// their JSON-Schema flows unchanged to every provider. The Rust side owns the
+// stdio subprocess + JSON-RPC; here we just register + route calls.
+
+// Live per-server status for the Settings UI: id → { running, toolCount, error, ts }.
+const mcpStatus = {};
+
+// Turn the JSON-RPC `result` string returned by the Rust `mcp_call_tool`
+// command into a plain string for the LLM. Throws on `isError` so the tool
+// loop surfaces it the same way built-in tool errors are surfaced.
+function formatMcpResult(raw) {
+  let r;
+  try { r = JSON.parse(raw); } catch { return String(raw); }
+  const parts = Array.isArray(r?.content) ? r.content : [];
+  const text = parts.map(p => {
+    if (p == null) return "";
+    if (p.type === "text")     return p.text || "";
+    if (p.type === "image")    return `[image${p.mimeType ? " " + p.mimeType : ""}]`;
+    if (p.type === "resource") return p.resource?.text || `[resource ${p.resource?.uri || ""}]`;
+    return JSON.stringify(p);
+  }).filter(Boolean).join("\n");
+  const body = text || JSON.stringify(r);
+  if (r && r.isError) throw new Error(body || "MCP tool returned an error");
+  return body;
+}
+
+// Register (or re-register) a server's discovered tools into the pluginHost.
+function registerMcpTools(serverId, toolsList) {
+  pluginHost.unregisterByPrefix(`mcp__${serverId}__`);
+  let n = 0;
+  for (const t of (toolsList || [])) {
+    if (!t || !t.name) continue;
+    pluginHost.register({
+      name: `mcp__${serverId}__${t.name}`,
+      category: `mcp:${serverId}`,
+      description: t.description || `MCP tool "${t.name}" from server "${serverId}".`,
+      inputSchema: t.inputSchema || { type: "object", properties: {} },
+      mcp: true,
+      handler: async (input) => {
+        const raw = await invokeTauri("mcp_call_tool", { id: serverId, name: t.name, args: input || {} });
+        return formatMcpResult(raw);
+      },
+    });
+    n++;
+  }
+  return n;
+}
+
+// Spawn an MCP server (via Rust), run the handshake, register its tools.
+async function startMcpServer(server) {
+  if (!server || !server.id || !server.command) throw new Error("MCP server needs an id and a command");
+  const raw = await invokeTauri("mcp_start", {
+    id: server.id,
+    command: server.command,
+    args: Array.isArray(server.args) ? server.args : [],
+    env: (server.env && typeof server.env === "object") ? server.env : {},
+  });
+  let parsed; try { parsed = JSON.parse(raw); } catch { parsed = {}; }
+  const count = registerMcpTools(server.id, parsed?.tools || []);
+  mcpStatus[server.id] = { running: true, toolCount: count, error: null, ts: Date.now() };
+  return { count };
+}
+
+// Stop a server and drop its tools.
+async function stopMcpServer(id) {
+  pluginHost.unregisterByPrefix(`mcp__${id}__`);
+  try { await invokeTauri("mcp_stop", { id }); } catch {}
+  mcpStatus[id] = { running: false, toolCount: 0, error: null, ts: Date.now() };
+}
+
+// Start every enabled server (called once on app launch). Per-server failures
+// are recorded in mcpStatus, never thrown — one bad server can't block the rest.
+async function startEnabledMcpServers() {
+  const cfg = settings.get("mcpServers") || { servers: [] };
+  for (const s of (cfg.servers || [])) {
+    if (!s || !s.enabled) continue;
+    try { await startMcpServer(s); }
+    catch (e) { mcpStatus[s.id] = { running: false, toolCount: 0, error: String(e?.message || e), ts: Date.now() }; }
+  }
+}
 
 const SEED_AGENTS = [
   { id: "agt_receptionist", name: "Receptionist", provider: "mock", model: "echo-v1", keyRef: null,
@@ -6384,6 +6482,101 @@ function EvalHarnessSection({ agents, runtimes, onChange }) {
   );
 }
 
+// ─── MCP servers: connect external Model Context Protocol tool servers ───
+// Each row spawns a stdio MCP server (via the Rust side), runs the handshake,
+// and registers its tools as `mcp__<id>__<tool>`. Start/Stop is live control;
+// the "auto-start on launch" checkbox is the persisted preference that
+// startEnabledMcpServers() reads at boot.
+function McpServersSection({ onChange }) {
+  const [open, setOpen] = useState(false);
+  const [tick, setTick] = useState(0);
+  const [busyUid, setBusyUid] = useState(null);
+  const bump = () => setTick(t => t + 1);
+  const cfg = settings.get("mcpServers") || { servers: [] };
+  const servers = cfg.servers || [];
+  const setCfg = (patch) => { settings.set({ mcpServers: { ...cfg, ...patch } }); bump(); onChange?.(); };
+  const updateServer = (uid, patch) => setCfg({ servers: servers.map(s => s._uid === uid ? { ...s, ...patch } : s) });
+
+  const slugify = (val) => (val || "").toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  const uniqueSlug = (base) => {
+    const taken = new Set(servers.map(s => s.id));
+    let i = 1, slug = base;
+    while (!slug || taken.has(slug)) slug = `${base || "server"}${i++}`;
+    return slug;
+  };
+  const addServer = () => {
+    setCfg({ servers: [...servers, { _uid: newId("mcp"), id: uniqueSlug("server"), label: "", command: "", argsText: "", envText: "", enabled: false }] });
+    setOpen(true);
+  };
+  const removeServer = async (s) => { await stopMcpServer(s.id); setCfg({ servers: servers.filter(x => x._uid !== s._uid) }); };
+
+  const parseArgs = (t) => (t || "").split("\n").map(x => x.trim()).filter(Boolean);
+  const parseEnv  = (t) => { const o = {}; for (const line of (t || "").split("\n")) { const i = line.indexOf("="); if (i > 0) { const k = line.slice(0, i).trim(); if (k) o[k] = line.slice(i + 1); } } return o; };
+  const dupId   = (s) => servers.some(x => x._uid !== s._uid && x.id === s.id);
+  const canStart = (s) => !!(s.id && (s.command || "").trim() && !dupId(s));
+
+  const start = async (s) => {
+    setBusyUid(s._uid);
+    try { await startMcpServer({ id: s.id, command: (s.command || "").trim(), args: parseArgs(s.argsText), env: parseEnv(s.envText) }); }
+    catch (e) { mcpStatus[s.id] = { running: false, toolCount: 0, error: String(e?.message || e), ts: Date.now() }; }
+    setBusyUid(null); bump(); onChange?.();
+  };
+  const stop = async (s) => { setBusyUid(s._uid); await stopMcpServer(s.id); setBusyUid(null); bump(); onChange?.(); };
+
+  const runningCount = servers.filter(s => mcpStatus[s.id]?.running).length;
+
+  return (
+    <div style={{ marginTop: 28, paddingTop: 18, borderTop: `2px solid ${c.ink}` }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none", marginBottom: 4 }}>
+        <Icon name={open ? "chevD" : "chevR"} size={12} color="#8a7c63" />
+        <h3 style={{ fontFamily: fonts.display, fontSize: 18, fontWeight: 700 }}>MCP servers</h3>
+        <span style={{ fontSize: 11, color: "#8a7c63", marginLeft: "auto" }}>{servers.length} server{servers.length === 1 ? "" : "s"}{runningCount ? ` · ${runningCount} running` : ""}</span>
+      </div>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={styles.vaultInfo}>
+            Connect external <strong>Model Context Protocol</strong> servers (stdio transport). Discovered tools register as <code style={styles.code}>mcp__&lt;id&gt;__&lt;tool&gt;</code> and can be granted to any agent in the Agents tab, just like built-in tools. Example — command <code style={styles.code}>npx</code>, args (one per line): <code style={styles.code}>-y</code>, <code style={styles.code}>@modelcontextprotocol/server-filesystem</code>, <code style={styles.code}>~/Documents</code>.
+          </div>
+          {servers.map(s => {
+            const st = mcpStatus[s.id] || {};
+            const busy = busyUid === s._uid;
+            return (
+              <div key={s._uid} style={{ padding: 12, margin: "0 16px", background: c.paper2, borderRadius: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <input value={s.id} placeholder="id" onChange={e => updateServer(s._uid, { id: slugify(e.target.value) })}
+                    style={{ ...styles.field, width: 120, fontSize: 12, padding: 6, fontFamily: fonts.mono, ...(dupId(s) ? { borderColor: c.rust, color: c.rust } : {}) }} />
+                  <input value={s.label || ""} placeholder="label (optional)" onChange={e => updateServer(s._uid, { label: e.target.value })}
+                    style={{ ...styles.field, flex: 1, fontSize: 12, padding: 6 }} />
+                  {st.running
+                    ? <button onClick={() => stop(s)} disabled={busy} style={{ ...styles.toolBulkBtn, color: c.rust, borderColor: c.rust, opacity: busy ? 0.6 : 1 }}>{busy ? "…" : "Stop"}</button>
+                    : <button onClick={() => start(s)} disabled={busy || !canStart(s)} style={{ ...styles.primaryBtn, opacity: (busy || !canStart(s)) ? 0.5 : 1 }}>{busy ? "Starting…" : "Start"}</button>}
+                  <button onClick={() => removeServer(s)} style={{ ...styles.headerIconBtn, padding: 4 }} title="Remove server"><Icon name="x" size={11} /></button>
+                </div>
+                <input value={s.command} placeholder="command (e.g. npx, node, python3, uvx)" onChange={e => updateServer(s._uid, { command: e.target.value })}
+                  style={{ ...styles.field, fontSize: 12, padding: 6, fontFamily: fonts.mono }} />
+                <textarea value={s.argsText} placeholder="arguments — one per line" onChange={e => updateServer(s._uid, { argsText: e.target.value })}
+                  style={{ ...styles.field, fontSize: 11, fontFamily: fonts.mono, padding: 6, minHeight: 36, resize: "vertical" }} />
+                <textarea value={s.envText} placeholder="environment — KEY=value, one per line (optional)" onChange={e => updateServer(s._uid, { envText: e.target.value })}
+                  style={{ ...styles.field, fontSize: 11, fontFamily: fonts.mono, padding: 6, minHeight: 28, resize: "vertical" }} />
+                <div style={{ fontSize: 11, fontFamily: fonts.mono, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {st.running && <span style={{ color: c.moss, fontWeight: 700 }}>● running · {st.toolCount} tool{st.toolCount === 1 ? "" : "s"}</span>}
+                  {!st.running && !st.error && <span style={{ color: "#8a7c63" }}>○ stopped</span>}
+                  {st.error && <span style={{ color: c.rust }}>⚠ {String(st.error).slice(0, 160)}</span>}
+                  <label style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center", color: "#5a5244", cursor: "pointer" }} title="Spawn this server automatically when yumuHub launches">
+                    <input type="checkbox" checked={!!s.enabled} onChange={e => updateServer(s._uid, { enabled: e.target.checked })} style={{ accentColor: c.rust, cursor: "pointer" }} />
+                    auto-start on launch
+                  </label>
+                </div>
+              </div>
+            );
+          })}
+          <div style={{ padding: "0 16px" }}><button onClick={addServer} style={styles.toolBulkBtn}>+ Add MCP server</button></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsView({ onChange, agents = [], runtimes = {}, vault: v, onDirtyChange }) {
   const [form, setForm] = useState({ ...settings.current });
   const [saved, setSaved] = useState(false);
@@ -6662,6 +6855,8 @@ function SettingsView({ onChange, agents = [], runtimes = {}, vault: v, onDirtyC
 
       <EvalHarnessSection agents={agents} runtimes={runtimes} onChange={onChange} />
 
+      <McpServersSection onChange={onChange} />
+
       <div style={{ marginTop: 28, paddingTop: 18, borderTop: `2px solid ${c.ink}` }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
           <h3 style={{ fontFamily: fonts.display, fontSize: 18, fontWeight: 700 }}>Universal system prompt</h3>
@@ -6800,6 +6995,10 @@ export default function YumuHub() {
 
   // Load yumuHub.md from disk on launch (file is the source of truth — overrides any cached copy)
   useEffect(() => { universal.load().then(() => dispatch({ type: "TICK" })); }, []);
+
+  // Start any enabled MCP servers on launch, then re-render so their tools
+  // show up in the Tools view / agent editors.
+  useEffect(() => { startEnabledMcpServers().then(() => dispatch({ type: "TICK" })); }, []);
 
   // Auto-purge archived chats older than archivePurgeDays. Run once on launch + hourly.
   useEffect(() => {

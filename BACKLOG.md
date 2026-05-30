@@ -19,8 +19,8 @@ Items parked during active development. Ranked by implementation effort (lines o
 
 ## Large (400–800 lines)
 
-- **MCP Server Mode (transport adapter)** — Expose tool registry over stdio/SSE MCP protocol. Map existing tools to MCP definitions. ~400–600 lines. **Highest leverage** — unlocks RAG, integrations, plugin ecosystem without building them.
-- **RAG / knowledge base via MCP client** — Connect to external MCP RAG server as tool provider. ~300–500 lines (client-only).
+- **MCP Server Mode (transport adapter)** — Expose tool registry over stdio/SSE MCP protocol. Map existing tools to MCP definitions. ~400–600 lines. The reverse of the shipped client — lets *other* MCP clients use yumuHub's tools.
+- ✅ **DONE — MCP client** — Connect to external MCP servers (stdio) as tool providers; discovered tools register as `mcp__<id>__<tool>` and are grantable per agent. Settings → MCP servers. This is the RAG / knowledge-base on-ramp (point it at any MCP RAG server). Rust: `mcp_start`/`mcp_call_tool`/`mcp_stop` in main.rs; JS client ~L2609. Remaining: remote/SSE transport, exit-cleanup of child procs.
 
 ## Very Large (800+ lines)
 
@@ -46,10 +46,11 @@ These require user decisions on the role contract before implementation:
 
 1. Closest-model suggestion (trivial, immediate QoL)
 2. Cost tracking (users need this to manage API spend)
-3. MCP transport adapter (unlocks half the gap list at once)
-4. Observability panel (builds on cost tracking)
-5. Basic guardrails (compliance checkbox)
-6. Persistent state (most-requested UX gap)
+3. ✅ MCP client adapter (done — external MCP servers' tools usable per-agent)
+4. MCP **server** mode (expose yumuHub's tools to other clients — the reverse direction)
+5. Observability panel (builds on cost tracking)
+6. Basic guardrails (compliance checkbox)
+7. Persistent state (most-requested UX gap)
 
 ---
 
@@ -58,4 +59,4 @@ These require user decisions on the role contract before implementation:
 - yumuHub scores ~18–21/30 vs best-in-class (Dify ~22–25, LangGraph ~23–26, Google ADK ~24–26)
 - Defensible niche: chat-native multi-agent hub between code frameworks and visual builders
 - 2 genuinely novel tools: `adhd_reason`, `truth_only`
-- MCP is the single highest-leverage gap to close
+- MCP **client** shipped (the highest-leverage gap) — external tools/RAG now plug in. Server-mode (exposing our tools) is the next MCP step.

@@ -2,6 +2,13 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use serde_json::{json, Value};
 
 fn workspace_root() -> Result<PathBuf, String> {
     let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
@@ -837,8 +844,193 @@ fn debug_log(line: String) -> Result<(), String> {
     Ok(())
 }
 
+// ── MCP (Model Context Protocol) client ──
+// yumuHub talks to external MCP servers over the stdio transport: each server
+// is a long-lived child process exchanging newline-delimited JSON-RPC 2.0
+// messages. A per-server reader thread drains stdout into an mpsc channel;
+// command handlers match responses by request id. This is the first managed,
+// long-lived subprocess subsystem in the app (everything else is one-shot).
+
+struct McpServer {
+    child: Child,
+    stdin: ChildStdin,
+    rx: Receiver<Value>,
+    next_id: u64,
+}
+
+#[derive(Default)]
+struct McpManager(Mutex<HashMap<String, McpServer>>);
+
+impl McpServer {
+    // Write one newline-delimited JSON-RPC message to the server's stdin.
+    fn write_msg(&mut self, msg: &Value) -> Result<(), String> {
+        use std::io::Write;
+        let mut line = serde_json::to_string(msg).map_err(|e| format!("encode: {}", e))?;
+        line.push('\n');
+        self.stdin.write_all(line.as_bytes()).map_err(|e| format!("write stdin: {}", e))?;
+        self.stdin.flush().map_err(|e| format!("flush stdin: {}", e))?;
+        Ok(())
+    }
+
+    // Send a request, block until the response with the matching id arrives.
+    // Notifications and any stale/other-id messages are skipped. The deadline
+    // is fixed up front so spurious traffic can't extend the wait forever.
+    fn request(&mut self, method: &str, params: Value, timeout_ms: u64) -> Result<Value, String> {
+        self.next_id += 1;
+        let id = self.next_id;
+        self.write_msg(&json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))?;
+        let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+        loop {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or_else(|| format!("MCP '{}' timed out after {}ms", method, timeout_ms))?;
+            match self.rx.recv_timeout(remaining) {
+                Ok(msg) => {
+                    if msg.get("id").and_then(|v| v.as_u64()) == Some(id) {
+                        if let Some(err) = msg.get("error") {
+                            return Err(format!("MCP '{}' error: {}", method, err));
+                        }
+                        return Ok(msg.get("result").cloned().unwrap_or(Value::Null));
+                    }
+                    // else: a notification/log line or a stale response — keep waiting.
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(format!("MCP '{}' timed out after {}ms", method, timeout_ms))
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(format!("MCP server exited before responding to '{}'", method))
+                }
+            }
+        }
+    }
+
+    fn notify(&mut self, method: &str, params: Value) -> Result<(), String> {
+        self.write_msg(&json!({"jsonrpc":"2.0","method":method,"params":params}))
+    }
+}
+
+// Start (or restart) an MCP server by id; run the initialize handshake and
+// return its tools/list result as a JSON string for the JS side to register.
+#[tauri::command]
+fn mcp_start(
+    manager: tauri::State<'_, McpManager>,
+    id: String,
+    command: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+) -> Result<String, String> {
+    // Replace any existing server registered under this id.
+    if let Ok(mut map) = manager.0.lock() {
+        if let Some(mut old) = map.remove(&id) {
+            let _ = old.child.kill();
+        }
+    }
+    // Spawn through a login shell so npx/node/python on the user's PATH resolve
+    // (a macOS GUI app doesn't inherit the terminal's PATH). `exec "$0" "$@"`
+    // replaces the shell with the server process (clean signals + pipes) and
+    // passes args positionally — no manual quoting, no injection.
+    let mut child = Command::new("/bin/zsh")
+        .arg("-l")
+        .arg("-c")
+        .arg(r#"exec "$0" "$@""#)
+        .arg(&command)
+        .args(&args)
+        .envs(&env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("spawn MCP server '{}': {}", command, e))?;
+
+    let stdin = child.stdin.take().ok_or("no stdin pipe on MCP server")?;
+    let stdout = child.stdout.take().ok_or("no stdout pipe on MCP server")?;
+
+    // Reader thread: drain stdout line-by-line, forward parsed JSON to the
+    // channel. Draining continuously also prevents the child from blocking on a
+    // full stdout pipe. Thread ends on EOF (child death) or channel close.
+    let (tx, rx) = mpsc::channel::<Value>();
+    std::thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            match line {
+                Ok(l) => {
+                    let t = l.trim();
+                    if t.is_empty() {
+                        continue;
+                    }
+                    if let Ok(v) = serde_json::from_str::<Value>(t) {
+                        if tx.send(v).is_err() {
+                            break;
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    let mut server = McpServer { child, stdin, rx, next_id: 0 };
+
+    // Handshake: initialize → initialized notification → tools/list.
+    if let Err(e) = server.request(
+        "initialize",
+        json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "yumuHub", "version": "1.0"}
+        }),
+        15000,
+    ) {
+        let _ = server.child.kill();
+        return Err(format!("initialize failed: {} (check the command and args)", e));
+    }
+    let _ = server.notify("notifications/initialized", json!({}));
+    let tools = match server.request("tools/list", json!({}), 15000) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = server.child.kill();
+            return Err(format!("tools/list failed: {}", e));
+        }
+    };
+
+    let mut map = manager.0.lock().map_err(|_| "MCP state poisoned".to_string())?;
+    map.insert(id, server);
+    serde_json::to_string(&tools).map_err(|e| format!("encode tools: {}", e))
+}
+
+// Invoke a tool on a running MCP server; returns the JSON-RPC `result`
+// (`{content:[...], isError}`) as a string for the JS side to unpack.
+#[tauri::command]
+fn mcp_call_tool(
+    manager: tauri::State<'_, McpManager>,
+    id: String,
+    name: String,
+    args: Value,
+) -> Result<String, String> {
+    let mut map = manager.0.lock().map_err(|_| "MCP state poisoned".to_string())?;
+    let server = map
+        .get_mut(&id)
+        .ok_or_else(|| format!("MCP server '{}' is not running", id))?;
+    let result = server.request("tools/call", json!({"name": name, "arguments": args}), 120000)?;
+    serde_json::to_string(&result).map_err(|e| format!("encode result: {}", e))
+}
+
+// Stop a running MCP server and kill its child process.
+#[tauri::command]
+fn mcp_stop(manager: tauri::State<'_, McpManager>, id: String) -> Result<String, String> {
+    let mut map = manager.0.lock().map_err(|_| "MCP state poisoned".to_string())?;
+    match map.remove(&id) {
+        Some(mut s) => {
+            let _ = s.child.kill();
+            Ok(format!("Stopped MCP server '{}'", id))
+        }
+        None => Ok(format!("MCP server '{}' was not running", id)),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
+        .manage(McpManager::default())
         .invoke_handler(tauri::generate_handler![
             beta_read,
             beta_write,
@@ -864,6 +1056,9 @@ fn main() {
             chat_backup_read,
             chat_backup_list,
             chat_backup_delete,
+            mcp_start,
+            mcp_call_tool,
+            mcp_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
